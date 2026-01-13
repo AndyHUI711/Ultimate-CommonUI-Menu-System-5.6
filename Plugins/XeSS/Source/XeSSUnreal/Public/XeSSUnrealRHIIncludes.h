@@ -25,5 +25,5 @@
 #include "XeSSCommonMacros.h"
 
 #if XESS_ENGINE_VERSION_GEQ(5, 2)
-#include "DataDrivenShaderPlatformInfo.h" // For IsFeatureLevelSupported()
+#include "DataDrivenShaderPlatformInfo.h"  // For IsFeatureLevelSupported()
 #endif

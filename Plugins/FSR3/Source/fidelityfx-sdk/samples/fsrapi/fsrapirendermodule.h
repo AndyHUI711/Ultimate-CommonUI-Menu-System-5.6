@@ -56,7 +56,15 @@ class FSRRenderModule : public cauldron::RenderModule
     } UpscalerType;
 
 public:
-    FSRRenderModule() : RenderModule(L"FSRApiRenderModule") {}
+    FSRRenderModule()
+        : RenderModule(L"FSRApiRenderModule"),
+          m_SafetyMarginInMs(0.1f),
+          m_VarianceFactor (0.1f),
+          m_AllowHybridSpin (false),
+          m_HybridSpinTime(2),
+          m_AllowWaitForSingleObjectOnFence(false),
+          framePacingTuning { m_SafetyMarginInMs, m_VarianceFactor, m_AllowHybridSpin, m_HybridSpinTime, m_AllowWaitForSingleObjectOnFence }
+    {}
     virtual ~FSRRenderModule();
 
     void Init(const json& initData);
@@ -121,6 +129,13 @@ private:
         Auto
     };
 
+    enum FSRDebugCheckerMode
+    {
+        Disabled = 0,
+        EnabledNoMessageCallback,
+        EnabledWithMessageCallback
+    };
+
     const float cMipBias[static_cast<uint32_t>(FSRScalePreset::Custom)] = {
         std::log2f(1.f / 1.0f) - 1.f + std::numeric_limits<float>::epsilon(),
         std::log2f(1.f / 1.5f) - 1.f + std::numeric_limits<float>::epsilon(),
@@ -161,11 +176,15 @@ private:
     bool m_IsNonNative                              = true;
     bool m_UpscaleRatioEnabled                      = false;
     bool m_UseMask                                  = true;
+    bool m_UseDistortionField                       = false;
     bool m_RCASSharpen                              = true;
     bool m_SharpnessEnabled                         = false;
     bool m_NeedReInit                               = false;
 
+    bool m_FrameInterpolationAvailable              = false;
+    bool m_AsyncComputeAvailable                    = false;
     bool m_EnableMaskOptions                        = true;
+    bool m_EnableWaitCallbackModeUI                 = true;
     bool m_FrameInterpolation                       = true;
     bool m_EnableAsyncCompute                       = true;
     bool m_AllowAsyncCompute                        = true;
@@ -173,6 +192,7 @@ private:
     bool m_UseCallback                              = true;
     bool m_DrawFrameGenerationDebugTearLines        = true;
     bool m_DrawFrameGenerationDebugResetIndicators  = true;
+    bool m_DrawFrameGenerationDebugPacingLines      = false;
     bool m_DrawFrameGenerationDebugView             = false;
     bool m_DrawUpscalerDebugView                    = false;
     bool m_PresentInterpolatedOnly                  = false;
@@ -185,11 +205,14 @@ private:
     // FFX API Context members
     std::vector<uint64_t> m_FsrVersionIds;
     uint32_t m_FsrVersionIndex = 0;
+    bool        m_overrideVersion = false;
+    uint64_t    m_currentUpscaleContextVersionId = 0;
+    const char* m_currentUpscaleContextVersionName = nullptr;
 
     bool m_ffxBackendInitialized = false;
-    ffx::Context m_UpscalingContext;
-    ffx::Context m_FrameGenContext;
-    ffx::Context m_SwapChainContext;
+    ffx::Context m_UpscalingContext = nullptr;
+    ffx::Context m_FrameGenContext  = nullptr;
+    ffx::Context m_SwapChainContext = nullptr;
     ffx::ConfigureDescFrameGeneration m_FrameGenerationConfig{};
 
     // Backup UI elements
@@ -214,11 +237,13 @@ private:
 
     bool     s_enableSoftwareMotionEstimation = true;
     int32_t  s_uiRenderMode      = 2;
+    int32_t  s_uiRenderModeNextFrame = 2; // needs to be in-sync with s_uiRenderMode after deviating at most 1 frame.
 
     // Surfaces for different UI render modes
     uint32_t                 m_curUiTextureIndex  = 0;
     const cauldron::Texture* m_pUiTexture[2]      = {};
     const cauldron::Texture* m_pHudLessTexture[2] = {};
+    const cauldron::Texture* m_pDistortionField[2] = {};
 
     TAARenderModule*          m_pTAARenderModule         = nullptr;
     ToneMappingRenderModule*  m_pToneMappingRenderModule = nullptr;
@@ -227,11 +252,22 @@ private:
     //Set Constant Buffer KeyValue via Configure Context KeyValue API. Valid Post Context creation.
     int32_t                  m_UpscalerCBKey = 0;
     float                    m_UpscalerCBValue = 1.f;
+    float                    m_UpscalerCBValueStore[5] = {1.f,1.f,1.f,1.0f/3,-1.0f/3};
     void                     SetUpscaleConstantBuffer(uint64_t key, float value);
+
+    FSRDebugCheckerMode      m_GlobalDebugCheckerMode = FSRDebugCheckerMode::Disabled;
+    void                     SetGlobalDebugCheckerMode(FSRDebugCheckerMode mode, bool recreate);
 
     //Set Swapchain waitcallback via Configure Context KeyValue API
     int32_t                  m_waitCallbackMode = 0;
 
+    //Set Swapchain Frame pacing Tuning
+    float m_SafetyMarginInMs; // in Millisecond
+    float m_VarianceFactor; // valid range [0.0,1.0]
+    bool  m_AllowHybridSpin;
+    uint32_t m_HybridSpinTime;
+    bool m_AllowWaitForSingleObjectOnFence;
+    FfxApiSwapchainFramePacingTuning framePacingTuning;
 };
 
 // alias to get sample.cpp to use this class.

@@ -1,6 +1,6 @@
 // This file is part of the FidelityFX Super Resolution 3.1 Unreal Engine Plugin.
 //
-// Copyright (c) 2023-2024 Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2023-2025 Advanced Micro Devices, Inc. All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +28,9 @@
 
 #include "CoreMinimal.h"
 #include "Interfaces/IPluginManager.h"
+#if UE_VERSION_AT_LEAST(5, 0, 0)
 #include "Misc/ConfigCacheIni.h"
+#endif
 #if UE_VERSION_AT_LEAST(5, 1, 0)
 #include "Misc/ConfigUtilities.h"
 #endif
@@ -303,6 +305,34 @@ TAutoConsoleVariable<float> CVarFSR3VelocityFactor(
 	ECVF_RenderThreadSafe
 );
 
+TAutoConsoleVariable<float> CVarFSR3ReactivenessScale(
+	TEXT("r.FidelityFX.FSR3.ReactivenessScale"),
+	1.0f,
+	TEXT("Range from 0.0 to infinity (Default 1.0), meant for development purpose to test if writing a larger value to reactive mask reduces ghosting."),
+	ECVF_RenderThreadSafe
+);
+
+TAutoConsoleVariable<float> CVarFSR3ShadingChangeScale(
+	TEXT("r.FidelityFX.FSR3.ShadingChangeScale"),
+	1.0f,
+	TEXT("Range from 0.0 to infinity (Default 1.0). Increasing this scales fsr3 computed shading change value at read to have higher reactiveness"),
+	ECVF_RenderThreadSafe
+);
+
+TAutoConsoleVariable<float> CVarFSR3AccumulationAddedPerFrame(
+	TEXT("r.FidelityFX.FSR3.AccumulationAddedPerFrame"),
+	1.0f / 3.0f,
+	TEXT("Range from 0.0 to 1.0 (Default 0.333). Corresponds to amount of accumulation added per frame at pixel coordinate where disocclusion occurred or when reactive mask value is > 0.0f. Decreasing this and drawing the ghosting object (IE no mv) to reactive mask with value close to 1.0f can decrease temporal ghosting. Decreasing this value could result in more thin feature pixels flickering."),
+	ECVF_RenderThreadSafe
+);
+
+TAutoConsoleVariable<float> CVarFSR3MinDisocclutionAccumulation(
+	TEXT("r.FidelityFX.FSR3.MinDisocclutionAccumulation"),
+	-1.0f / 3.0f,
+	TEXT("Range from -1.0 to 1.0 (Default -0.333). Increasing this value may reduce white pixel temporal flickering around swaying thin objects that are disoccluding one another often. Too high value may increase ghosting. A sufficiently negative value means for pixel coordinate at frame N that is disoccluded, add accumulation starting at frame N+2 based on r.FidelityFX.FSR3.AccumulationAddedPerFrame."),
+	ECVF_RenderThreadSafe
+);
+
 TAutoConsoleVariable<int32> CVarFSR3DeferDelete(
 	TEXT("r.FidelityFX.FSR3.DeferDelete"),
 	0,
@@ -344,6 +374,12 @@ TAutoConsoleVariable<int32> CVarFFXFIUIMode(
 	TEXT("- Slate Redraw (0): will cause Slate to render the UI on to both the real & generated images each frame, this is higher quality but requires UI elements to be able to render multiple times per game frame.\n")
 	TEXT("- UI Extraction (1): will compare the pre- & post- UI frame to extract the UI and copy it on to the generated frame, this might result in lower quality for translucent UI elements but doesn't require re-rendering UI elements."),
 	ECVF_ReadOnly);
+
+TAutoConsoleVariable<int32> CVarFFXFIUseDistortionTexture(
+	TEXT("r.FidelityFX.FI.UseDistortionTexture"),
+	0,
+	TEXT("Set to 1 to bind the UE distortion texture to the Frame Interpolation context to better interpolate distortion, set to 0 to ignore distortion (Default: 0).\n"),
+	ECVF_RenderThreadSafe);
 
 #if (UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT || UE_BUILD_TEST)
 TAutoConsoleVariable<int32> CVarFFXFIShowDebugTearLines(

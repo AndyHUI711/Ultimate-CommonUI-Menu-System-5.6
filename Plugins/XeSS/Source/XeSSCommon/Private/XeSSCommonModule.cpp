@@ -21,6 +21,7 @@
  ******************************************************************************/
 
 #include "XeSSCommonModule.h"
+
 #include "Modules/ModuleManager.h"
 
-IMPLEMENT_MODULE(FXeSSCommon, XeSSCommon)
+IMPLEMENT_MODULE(FXeSSCommonModule, XeSSCommon)

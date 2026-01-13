@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 - 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+* Copyright (c) 2020 - 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
 * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
 * property and proprietary rights in and to this material, related
@@ -52,11 +52,21 @@ void FDLSSEditorModule::StartupModule()
 				{
 					IDLSSModuleInterface* DLSSModule = &FModuleManager::LoadModuleChecked<IDLSSModuleInterface>(TEXT("DLSS"));
 					const NGXRHI* NGXRHIExtensions = DLSSModule->GetDLSSUpscaler()->GetNGXRHI();
-					Settings->GenericDLSSBinaryPath = NGXRHIExtensions->GetDLSSGenericBinaryInfo().Get<0>();
-					Settings->bGenericDLSSBinaryExists = NGXRHIExtensions->GetDLSSGenericBinaryInfo().Get<1>();
+					Settings->GenericDLSSSRBinaryPath = NGXRHIExtensions->GetDLSSSRGenericBinaryInfo().Get<0>();
+					Settings->bGenericDLSSSRBinaryExists = NGXRHIExtensions->GetDLSSSRGenericBinaryInfo().Get<1>();
 
-					Settings->CustomDLSSBinaryPath = NGXRHIExtensions->GetDLSSCustomBinaryInfo().Get<0>();
-					Settings->bCustomDLSSBinaryExists = NGXRHIExtensions->GetDLSSCustomBinaryInfo().Get<1>();
+					Settings->CustomDLSSSRBinaryPath = NGXRHIExtensions->GetDLSSSRCustomBinaryInfo().Get<0>();
+					Settings->bCustomDLSSSRBinaryExists = NGXRHIExtensions->GetDLSSSRCustomBinaryInfo().Get<1>();
+
+
+					Settings->GenericDLSSRRBinaryPath = NGXRHIExtensions->GetDLSSRRGenericBinaryInfo().Get<0>();
+					Settings->bGenericDLSSRRBinaryExists = NGXRHIExtensions->GetDLSSRRGenericBinaryInfo().Get<1>();
+
+					Settings->CustomDLSSRRBinaryPath = NGXRHIExtensions->GetDLSSRRCustomBinaryInfo().Get<0>();
+					Settings->bCustomDLSSRRBinaryExists = NGXRHIExtensions->GetDLSSRRCustomBinaryInfo().Get<1>();
+
+
+
 				}
 
 				ISettingsSectionPtr SettingsSection = SettingsModule->RegisterSettings("Project", "Plugins", "DLSS",

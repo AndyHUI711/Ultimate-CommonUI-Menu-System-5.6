@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 - 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+* Copyright (c) 2020 - 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
 * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
 * property and proprietary rights in and to this material, related
@@ -43,12 +43,16 @@ struct FDLSSPassParameters
 	FRDGTexture* SceneColorInput = nullptr;
 	FRDGTexture* SceneVelocityInput = nullptr;
 	FRDGTexture* SceneDepthInput = nullptr;
+	FRDGTexture* BiasCurrentColorInput = nullptr;
 
 	// Used by denoisers
 	FRDGTexture* DiffuseAlbedo = nullptr;
 	FRDGTexture* SpecularAlbedo = nullptr;
 	FRDGTexture* Normal = nullptr;
 	FRDGTexture* Roughness = nullptr;
+	FRDGTexture* ReflectionHitDistance = nullptr;
+	FRDGTexture* SSSGuide = nullptr;
+	FRDGTexture* DOFGuide = nullptr;
 
 #if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 3
 	FRDGTexture* EyeAdaptation = nullptr;
@@ -146,3 +150,32 @@ private:
 	) const;
 };
 
+#if !ENGINE_PROVIDES_UE_5_6_ID3D12DYNAMICRHI_METHODS
+BEGIN_SHADER_PARAMETER_STRUCT(FDebugLayerCompatibilityShaderParameters, )
+	RDG_TEXTURE_ACCESS(DebugLayerCompatibilityHelperSource, ERHIAccess::CopySrc)
+	RDG_TEXTURE_ACCESS(DebugLayerCompatibilityHelperDest, ERHIAccess::CopyDest)
+END_SHADER_PARAMETER_STRUCT()
+
+inline void AddDebugLayerCompatibilitySetupPasses(FRDGBuilder& GraphBuilder, FDebugLayerCompatibilityShaderParameters* PassParameters)
+{
+	RDG_EVENT_SCOPE(GraphBuilder, "UE5.5AndOlderDebugLayerCompatibilitySetup");
+	FRDGTextureDesc Desc = FRDGTextureDesc::Create2D(FIntPoint(1, 1), PF_FloatRGBA, FClearValueBinding::Black, TexCreate_RenderTargetable);
+	PassParameters->DebugLayerCompatibilityHelperSource = GraphBuilder.CreateTexture(Desc, TEXT("UE5.5AndOlderDebugLayerCompatibilityHelperSource"));
+	PassParameters->DebugLayerCompatibilityHelperDest = GraphBuilder.CreateTexture(Desc, TEXT("UE5.5AndOlderDebugLayerCompatibilityHelperDest"));
+	AddClearRenderTargetPass(GraphBuilder, PassParameters->DebugLayerCompatibilityHelperSource);
+	AddClearRenderTargetPass(GraphBuilder, PassParameters->DebugLayerCompatibilityHelperDest);
+}
+
+inline void DebugLayerCompatibilityRHISetup(const FDebugLayerCompatibilityShaderParameters& PassParameters, FRHIDLSSArguments& InDLSSArguments)
+{
+	check(PassParameters.DebugLayerCompatibilityHelperSource);
+	PassParameters.DebugLayerCompatibilityHelperSource->MarkResourceAsUsed();
+
+	check(PassParameters.DebugLayerCompatibilityHelperDest);
+	PassParameters.DebugLayerCompatibilityHelperDest->MarkResourceAsUsed();
+
+	InDLSSArguments.DebugLayerCompatibilityHelperSource = PassParameters.DebugLayerCompatibilityHelperSource->GetRHI();
+	InDLSSArguments.DebugLayerCompatibilityHelperDest = PassParameters.DebugLayerCompatibilityHelperDest->GetRHI();
+}
+
+#endif 

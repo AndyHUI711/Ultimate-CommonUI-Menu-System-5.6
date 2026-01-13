@@ -68,9 +68,11 @@ void FSRRenderModule::Init(const json& initData)
     m_pTonemappedColorTarget = GetFramework()->GetRenderTexture(L"SwapChainProxy");
     m_pDepthTarget           = GetFramework()->GetRenderTexture(L"DepthTarget");
     m_pMotionVectors         = GetFramework()->GetRenderTexture(L"GBufferMotionVectorRT");
+    m_pDistortionField[0]    = GetFramework()->GetRenderTexture(L"DistortionField0");
+    m_pDistortionField[1]    = GetFramework()->GetRenderTexture(L"DistortionField1");
     m_pReactiveMask          = GetFramework()->GetRenderTexture(L"ReactiveMask");
     m_pCompositionMask       = GetFramework()->GetRenderTexture(L"TransCompMask");
-    CauldronAssert(ASSERT_CRITICAL, m_pMotionVectors && m_pReactiveMask && m_pCompositionMask, L"Could not get one of the needed resources for FSR Rendermodule.");
+    CauldronAssert(ASSERT_CRITICAL, m_pMotionVectors && m_pDistortionField[0] && m_pDistortionField[1] && m_pReactiveMask && m_pCompositionMask, L"Could not get one of the needed resources for FSR Rendermodule.");
 
     // Get a CPU resource view that we'll use to map the render target to
     GetResourceViewAllocator()->AllocateCPURenderViews(&m_pRTResourceView);
@@ -151,108 +153,152 @@ void FSRRenderModule::Init(const json& initData)
     // Separate from FSR generation so it can be done when the engine creates the swapchain
     // should not be created and destroyed with FSR, as it requires a switch to windowed mode
 
-#if defined(FFX_API_DX12)
-    IDXGISwapChain4* dxgiSwapchain = GetSwapChain()->GetImpl()->DX12SwapChain();
-    dxgiSwapchain->AddRef();
-    cauldron::GetSwapChain()->GetImpl()->SetDXGISwapChain(nullptr);
-
-    ffx::CreateContextDescFrameGenerationSwapChainForHwndDX12 createSwapChainDesc{};
-    dxgiSwapchain->GetHwnd(&createSwapChainDesc.hwnd);
-    DXGI_SWAP_CHAIN_DESC1 desc1;
-    dxgiSwapchain->GetDesc1(&desc1);
-    createSwapChainDesc.desc = &desc1;
-    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreenDesc;
-    dxgiSwapchain->GetFullscreenDesc(&fullscreenDesc);
-    createSwapChainDesc.fullscreenDesc = &fullscreenDesc;
-    dxgiSwapchain->GetParent(IID_PPV_ARGS(&createSwapChainDesc.dxgiFactory));
-    createSwapChainDesc.gameQueue = GetDevice()->GetImpl()->DX12CmdQueue(cauldron::CommandQueue::Graphics);
-
-    dxgiSwapchain->Release();
-    dxgiSwapchain = nullptr;
-    createSwapChainDesc.swapchain = &dxgiSwapchain;
-
-    ffx::ReturnCode retCode = ffx::CreateContext(m_SwapChainContext, nullptr, createSwapChainDesc);
-    CauldronAssert(ASSERT_CRITICAL, retCode == ffx::ReturnCode::Ok, L"Couldn't create the ffxapi fg swapchain (dx12): %d", (uint32_t)retCode);
-    createSwapChainDesc.dxgiFactory->Release();
     
-    cauldron::GetSwapChain()->GetImpl()->SetDXGISwapChain(dxgiSwapchain);
+#if defined(FFX_API_DX12)
 
-    // In case the app is handling Alt-Enter manually we need to update the window association after creating a different swapchain
-    IDXGIFactory7* factory = nullptr;
-    if (SUCCEEDED(dxgiSwapchain->GetParent(IID_PPV_ARGS(&factory))))
+    m_FrameInterpolationAvailable = true;
+    m_AsyncComputeAvailable       = true;
+
+#elif defined(FFX_API_VK)
+
+    const cauldron::FIQueue* pAsyncComputeQueue = cauldron::GetDevice()->GetImpl()->GetFIAsyncComputeQueue();
+    const cauldron::FIQueue* pPresentQueue      = cauldron::GetDevice()->GetImpl()->GetFIPresentQueue();
+    const cauldron::FIQueue* pImageAcquireQueue = cauldron::GetDevice()->GetImpl()->GetFIImageAcquireQueue();
+
+    m_FrameInterpolationAvailable = pPresentQueue->queue != VK_NULL_HANDLE && pImageAcquireQueue->queue != VK_NULL_HANDLE;
+    m_AsyncComputeAvailable       = m_FrameInterpolationAvailable && pAsyncComputeQueue->queue != VK_NULL_HANDLE;
+
+#endif  // defined(FFX_API_DX12)
+
+    if (!m_FrameInterpolationAvailable)
     {
-        factory->MakeWindowAssociation(cauldron::GetFramework()->GetImpl()->GetHWND(), DXGI_MWA_NO_WINDOW_CHANGES);
-        factory->Release();
+        m_FrameInterpolation = false;
+        s_uiRenderMode       = 0;  // no UI handling
+        s_uiRenderModeNextFrame = 0;
+        CauldronWarning(L"Frame interpolation isn't available on this device.");
+    }
+    if (!m_AsyncComputeAvailable)
+    {
+        m_EnableAsyncCompute        = false;
+        m_PendingEnableAsyncCompute = false;
+        m_AllowAsyncCompute         = false;
+
+        CauldronWarning(L"Async compute Frame interpolation isn't available on this device.");
     }
 
-    dxgiSwapchain->Release();
+    if (m_FrameInterpolationAvailable)
+    {
+#if defined(FFX_API_DX12)
+        IDXGISwapChain4* dxgiSwapchain = GetSwapChain()->GetImpl()->DX12SwapChain();
+        dxgiSwapchain->AddRef();
+        cauldron::GetSwapChain()->GetImpl()->SetDXGISwapChain(nullptr);
 
-    // Lets do the same for HDR as well as it will need to be re initialized since swapchain was re created
-    cauldron::GetSwapChain()->SetHDRMetadataAndColorspace();
+        ffx::CreateContextDescFrameGenerationSwapChainForHwndDX12 createSwapChainDesc{};
+        dxgiSwapchain->GetHwnd(&createSwapChainDesc.hwnd);
+        DXGI_SWAP_CHAIN_DESC1 desc1;
+        dxgiSwapchain->GetDesc1(&desc1);
+        createSwapChainDesc.desc = &desc1;
+        DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreenDesc;
+        dxgiSwapchain->GetFullscreenDesc(&fullscreenDesc);
+        createSwapChainDesc.fullscreenDesc = &fullscreenDesc;
+        dxgiSwapchain->GetParent(IID_PPV_ARGS(&createSwapChainDesc.dxgiFactory));
+        createSwapChainDesc.gameQueue = GetDevice()->GetImpl()->DX12CmdQueue(cauldron::CommandQueue::Graphics);
+
+        dxgiSwapchain->Release();
+        dxgiSwapchain = nullptr;
+        createSwapChainDesc.swapchain = &dxgiSwapchain;
+
+        ffx::ReturnCode retCode = ffx::CreateContext(m_SwapChainContext, nullptr, createSwapChainDesc);
+        CauldronAssert(ASSERT_CRITICAL, retCode == ffx::ReturnCode::Ok, L"Couldn't create the ffxapi fg swapchain (dx12): %d", (uint32_t)retCode);
+        createSwapChainDesc.dxgiFactory->Release();
+
+        cauldron::GetSwapChain()->GetImpl()->SetDXGISwapChain(dxgiSwapchain);
+
+        // In case the app is handling Alt-Enter manually we need to update the window association after creating a different swapchain
+        IDXGIFactory7* factory = nullptr;
+        if (SUCCEEDED(dxgiSwapchain->GetParent(IID_PPV_ARGS(&factory))))
+        {
+            factory->MakeWindowAssociation(cauldron::GetFramework()->GetImpl()->GetHWND(), DXGI_MWA_NO_WINDOW_CHANGES);
+            factory->Release();
+        }
+
+        dxgiSwapchain->Release();
+
+        // Lets do the same for HDR as well as it will need to be re initialized since swapchain was re created
+        cauldron::GetSwapChain()->SetHDRMetadataAndColorspace();
+
 #elif defined(FFX_API_VK)
-    // Create frameinterpolation swapchain
-    cauldron::SwapChain* pSwapchain       = cauldron::GetFramework()->GetSwapChain();
-    VkSwapchainKHR       currentSwapchain = pSwapchain->GetImpl()->VKSwapChain();
-    
-    ffx::CreateContextDescFrameGenerationSwapChainVK createSwapChainDesc{};
-    createSwapChainDesc.physicalDevice                = cauldron::GetDevice()->GetImpl()->VKPhysicalDevice();
-    createSwapChainDesc.device                        = cauldron::GetDevice()->GetImpl()->VKDevice();
-    createSwapChainDesc.swapchain                     = &currentSwapchain;
-    createSwapChainDesc.createInfo                    = *cauldron::GetFramework()->GetSwapChain()->GetImpl()->GetCreateInfo();
-    createSwapChainDesc.allocator                     = nullptr;
-    createSwapChainDesc.gameQueue.queue               = cauldron::GetDevice()->GetImpl()->VKCmdQueue(cauldron::CommandQueue::Graphics);
-    createSwapChainDesc.gameQueue.familyIndex         = cauldron::GetDevice()->GetImpl()->GetQueueFamilies().familyIndices[cauldron::RequestedQueue::Graphics];
-    createSwapChainDesc.gameQueue.submitFunc          = nullptr;  // this queue is only used in vkQueuePresentKHR, hence doesn't need a callback
-    createSwapChainDesc.asyncComputeQueue.queue       = cauldron::GetDevice()->GetImpl()->GetFIAsyncComputeQueue()->queue;
-    createSwapChainDesc.asyncComputeQueue.familyIndex = cauldron::GetDevice()->GetImpl()->GetQueueFamilies().familyIndices[cauldron::RequestedQueue::FIAsyncCompute];
-    createSwapChainDesc.asyncComputeQueue.submitFunc  = nullptr;
-    createSwapChainDesc.presentQueue.queue            = cauldron::GetDevice()->GetImpl()->GetFIPresentQueue()->queue;
-    createSwapChainDesc.presentQueue.familyIndex      = cauldron::GetDevice()->GetImpl()->GetQueueFamilies().familyIndices[cauldron::RequestedQueue::FIPresent];
-    createSwapChainDesc.presentQueue.submitFunc       = nullptr;
-    createSwapChainDesc.imageAcquireQueue.queue       = cauldron::GetDevice()->GetImpl()->GetFIImageAcquireQueue()->queue;
-    createSwapChainDesc.imageAcquireQueue.familyIndex = cauldron::GetDevice()->GetImpl()->GetQueueFamilies().familyIndices[cauldron::RequestedQueue::FIImageAcquire];
-    createSwapChainDesc.imageAcquireQueue.submitFunc  = nullptr;
 
-    // make sure swapchain is not holding a ref to real swapchain
-    cauldron::GetFramework()->GetSwapChain()->GetImpl()->SetVKSwapChain(VK_NULL_HANDLE);
+        // Create frameinterpolation swapchain
+        cauldron::SwapChain* pSwapchain       = cauldron::GetFramework()->GetSwapChain();
+        VkSwapchainKHR       currentSwapchain = pSwapchain->GetImpl()->VKSwapChain();
 
-    auto convertQueueInfo = [](VkQueueInfoFFXAPI queueInfo) {
-        VkQueueInfoFFX info;
-        info.queue       = queueInfo.queue;
-        info.familyIndex = queueInfo.familyIndex;
-        info.submitFunc  = queueInfo.submitFunc;
-        return info;
-    };
+        ffx::CreateContextDescFrameGenerationSwapChainVK createSwapChainDesc{};
+        createSwapChainDesc.physicalDevice        = cauldron::GetDevice()->GetImpl()->VKPhysicalDevice();
+        createSwapChainDesc.device                = cauldron::GetDevice()->GetImpl()->VKDevice();
+        createSwapChainDesc.swapchain             = &currentSwapchain;
+        createSwapChainDesc.createInfo            = *cauldron::GetFramework()->GetSwapChain()->GetImpl()->GetCreateInfo();
+        createSwapChainDesc.allocator             = nullptr;
+        createSwapChainDesc.gameQueue.queue       = cauldron::GetDevice()->GetImpl()->VKCmdQueue(cauldron::CommandQueue::Graphics);
+        createSwapChainDesc.gameQueue.familyIndex = cauldron::GetDevice()->GetImpl()->VKCmdQueueFamily(cauldron::CommandQueue::Graphics);
+        createSwapChainDesc.gameQueue.submitFunc  = nullptr;  // this queue is only used in vkQueuePresentKHR, hence doesn't need a callback
 
-    VkFrameInterpolationInfoFFX frameInterpolationInfo = {};
-    frameInterpolationInfo.device                      = createSwapChainDesc.device;
-    frameInterpolationInfo.physicalDevice              = createSwapChainDesc.physicalDevice;
-    frameInterpolationInfo.pAllocator                  = createSwapChainDesc.allocator;
-    frameInterpolationInfo.gameQueue                   = convertQueueInfo(createSwapChainDesc.gameQueue);
-    frameInterpolationInfo.asyncComputeQueue           = convertQueueInfo(createSwapChainDesc.asyncComputeQueue);
-    frameInterpolationInfo.presentQueue                = convertQueueInfo(createSwapChainDesc.presentQueue);
-    frameInterpolationInfo.imageAcquireQueue           = convertQueueInfo(createSwapChainDesc.imageAcquireQueue);
+        createSwapChainDesc.asyncComputeQueue.queue       = pAsyncComputeQueue->queue;
+        createSwapChainDesc.asyncComputeQueue.familyIndex = pAsyncComputeQueue->family;
+        createSwapChainDesc.asyncComputeQueue.submitFunc  = nullptr;
 
-    ffx::ReturnCode retCode = ffx::CreateContext(m_SwapChainContext, nullptr, createSwapChainDesc);
+        createSwapChainDesc.presentQueue.queue       = pPresentQueue->queue;
+        createSwapChainDesc.presentQueue.familyIndex = pPresentQueue->family;
+        createSwapChainDesc.presentQueue.submitFunc  = nullptr;
 
-    ffx::QueryDescSwapchainReplacementFunctionsVK replacementFunctions{};
-    ffx::Query(m_SwapChainContext, replacementFunctions);
-    cauldron::GetDevice()->GetImpl()->SetSwapchainMethodsAndContext(nullptr,
-                                                                    nullptr,
-                                                                    replacementFunctions.pOutGetSwapchainImagesKHR,
-                                                                    replacementFunctions.pOutAcquireNextImageKHR,
-                                                                    replacementFunctions.pOutQueuePresentKHR,
-                                                                    replacementFunctions.pOutSetHdrMetadataEXT,
-                                                                    replacementFunctions.pOutCreateSwapchainFFXAPI,
-                                                                    replacementFunctions.pOutDestroySwapchainFFXAPI,
-                                                                    nullptr,
-                                                                    replacementFunctions.pOutGetLastPresentCountFFXAPI,
-                                                                    m_SwapChainContext,
-                                                                    &frameInterpolationInfo);
+        createSwapChainDesc.imageAcquireQueue.queue       = pImageAcquireQueue->queue;
+        createSwapChainDesc.imageAcquireQueue.familyIndex = pImageAcquireQueue->family;
+        createSwapChainDesc.imageAcquireQueue.submitFunc  = nullptr;
 
-    // Set frameinterpolation swapchain to engine
-    cauldron::GetFramework()->GetSwapChain()->GetImpl()->SetVKSwapChain(currentSwapchain, true);
+        // make sure swapchain is not holding a ref to real swapchain
+        cauldron::GetFramework()->GetSwapChain()->GetImpl()->SetVKSwapChain(VK_NULL_HANDLE);
+
+        auto convertQueueInfo = [](VkQueueInfoFFXAPI queueInfo) {
+            VkQueueInfoFFX info;
+            info.queue       = queueInfo.queue;
+            info.familyIndex = queueInfo.familyIndex;
+            info.submitFunc  = queueInfo.submitFunc;
+            return info;
+        };
+
+        VkFrameInterpolationInfoFFX frameInterpolationInfo = {};
+        frameInterpolationInfo.device                      = createSwapChainDesc.device;
+        frameInterpolationInfo.physicalDevice              = createSwapChainDesc.physicalDevice;
+        frameInterpolationInfo.pAllocator                  = createSwapChainDesc.allocator;
+        frameInterpolationInfo.gameQueue                   = convertQueueInfo(createSwapChainDesc.gameQueue);
+        frameInterpolationInfo.asyncComputeQueue           = convertQueueInfo(createSwapChainDesc.asyncComputeQueue);
+        frameInterpolationInfo.presentQueue                = convertQueueInfo(createSwapChainDesc.presentQueue);
+        frameInterpolationInfo.imageAcquireQueue           = convertQueueInfo(createSwapChainDesc.imageAcquireQueue);
+
+        ffx::ReturnCode retCode = ffx::CreateContext(m_SwapChainContext, nullptr, createSwapChainDesc);
+
+        ffx::QueryDescSwapchainReplacementFunctionsVK replacementFunctions{};
+        ffx::Query(m_SwapChainContext, replacementFunctions);
+        cauldron::GetDevice()->GetImpl()->SetSwapchainMethodsAndContext(nullptr,
+                                                                        nullptr,
+                                                                        replacementFunctions.pOutGetSwapchainImagesKHR,
+                                                                        replacementFunctions.pOutAcquireNextImageKHR,
+                                                                        replacementFunctions.pOutQueuePresentKHR,
+                                                                        replacementFunctions.pOutSetHdrMetadataEXT,
+                                                                        replacementFunctions.pOutCreateSwapchainFFXAPI,
+                                                                        replacementFunctions.pOutDestroySwapchainFFXAPI,
+                                                                        nullptr,
+                                                                        replacementFunctions.pOutGetLastPresentCountFFXAPI,
+                                                                        m_SwapChainContext,
+                                                                        &frameInterpolationInfo);
+
+        // Set frameinterpolation swapchain to engine
+        cauldron::GetFramework()->GetSwapChain()->GetImpl()->SetVKSwapChain(currentSwapchain, true);
+
+        // we need to re initialize HDR info since swapchain was re created
+        cauldron::GetSwapChain()->SetHDRMetadataAndColorspace();
 #endif  // defined(FFX_API_DX12)
+    }
 
     // Fetch hudless texture resources
     m_pHudLessTexture[0] = GetFramework()->GetRenderTexture(L"HudlessTarget0");
@@ -280,9 +326,12 @@ FSRRenderModule::~FSRRenderModule()
     // Destroy the FSR context
     UpdateFSRContext(false);
 
-    // Restore the application's swapchain
-    ffx::DestroyContext(m_SwapChainContext);
-    RestoreApplicationSwapChain(false);
+    if (m_SwapChainContext != nullptr)
+    {
+        // Restore the application's swapchain
+        ffx::DestroyContext(m_SwapChainContext);
+        RestoreApplicationSwapChain(false);
+    }
 }
 
 void FSRRenderModule::EnableModule(bool enabled)
@@ -380,8 +429,12 @@ FfxErrorCode waitCallback(wchar_t* fenceName, uint64_t fenceValueToWaitFor)
 
 void FSRRenderModule::InitUI(UISection* pUISection)
 {
+    static const bool        alwaysTrue   = true;
     std::vector<const char*> comboOptions = {"Native", "FSR (ffxapi)"};
     pUISection->RegisterUIElement<UICombo>("Method", (int32_t&)m_UiUpscaleMethod, std::move(comboOptions), [this](int32_t cur, int32_t old) { SwitchUpscaler(cur); });
+
+    m_UIElements.emplace_back(
+        pUISection->RegisterUIElement<UICheckBox>("Override FSR Version", m_overrideVersion, [this](int32_t, int32_t) { m_NeedReInit = true; }, false));
 
     // get version info from ffxapi
     ffx::QueryDescGetVersions versionQuery{};
@@ -401,7 +454,7 @@ void FSRRenderModule::InitUI(UISection* pUISection)
     ffxQuery(nullptr, &versionQuery.header);
 
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UICombo>(
-        "FSR Version", (int32_t&)m_FsrVersionIndex, std::move(versionNames), [this](int32_t, int32_t) { m_NeedReInit = true; }, false));
+        "FSR Version", (int32_t&)m_FsrVersionIndex, std::move(versionNames), m_overrideVersion, [this](int32_t, int32_t) { m_NeedReInit = true; }, false));
 
     // Setup scale preset options
     std::vector<const char*> presetComboOptions = { "Native AA (1.0x)", "Quality (1.5x)", "Balanced (1.7x)", "Performance (2x)", "Ultra Performance (3x)", "Custom" };
@@ -434,7 +487,7 @@ void FSRRenderModule::InitUI(UISection* pUISection)
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UISlider<float>>(
         "Letterbox size", m_LetterboxRatio, 0.1f, 1.f, [this](float cur, float old) { UpdateUpscaleRatio(&old); }, false));
 
-    m_UIElements.emplace_back(pUISection->RegisterUIElement<UIButton>("Reset Upscaling", m_FrameInterpolation, [this]() { m_ResetUpscale = true; }));
+    m_UIElements.emplace_back(pUISection->RegisterUIElement<UIButton>("Reset Upscaling", [this]() { m_ResetUpscale = true; }));
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>("Draw upscaler debug view", m_DrawUpscalerDebugView, nullptr, false));
 
     // Reactive mask
@@ -449,25 +502,40 @@ void FSRRenderModule::InitUI(UISection* pUISection)
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UISlider<float>>("Sharpness", m_Sharpness, 0.f, 1.f, m_RCASSharpen, nullptr, false));
 
     //Set Upscaler CB KeyValue post context creation
-    std::vector<const char*>        configureUpscaleKeyLabels = { "fVelocity" };
+    std::vector<const char*>        configureUpscaleKeyLabels = { "fVelocity", "fReactivenessScale", "fShadingChangeScale", "fAccumulationAddedPerFrame", "fMinDisocclusionAccumulation"};
     
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UICombo>(
         "Upscaler CB Key to set",
         m_UpscalerCBKey,
         configureUpscaleKeyLabels,
         m_EnableMaskOptions,
-        nullptr,
+        [this](float, float) { m_UpscalerCBValue =  m_UpscalerCBValueStore[m_UpscalerCBKey]; },
         m_EnableMaskOptions));
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UISlider<float>>(
         "Upscaler CB Value to set",
         m_UpscalerCBValue,
-        0.f, 1.f,
+        -1.f, 2.f,
         m_EnableMaskOptions,
-        [this](float, float) { SetUpscaleConstantBuffer(m_UpscalerCBKey, m_UpscalerCBValue); },
+        [this](float, float) { m_UpscalerCBValueStore[m_UpscalerCBKey] = m_UpscalerCBValue; SetUpscaleConstantBuffer(m_UpscalerCBKey, m_UpscalerCBValue); },
         m_EnableMaskOptions));
 
+    // Debug Checker
+    std::vector<const char*> debugMessageComboOptions{ "Disabled", "Enabled. Set nullptr message callback", "Enabled. Set Cauldron message callback" };
+    m_UIElements.emplace_back(pUISection->RegisterUIElement<UICombo>("Debug Checker", (int32_t&)m_GlobalDebugCheckerMode, debugMessageComboOptions, 
+        [this](int32_t nextVal, int32_t prevVal)
+        { 
+            if ((prevVal == FSRDebugCheckerMode::Disabled && nextVal != FSRDebugCheckerMode::Disabled) || (prevVal != FSRDebugCheckerMode::Disabled && nextVal == FSRDebugCheckerMode::Disabled))
+            {
+                SetGlobalDebugCheckerMode(static_cast<FSRDebugCheckerMode> (nextVal), true);
+            }
+            else
+            {
+                SetGlobalDebugCheckerMode(static_cast<FSRDebugCheckerMode> (nextVal), false);
+            }
+        }));
+
     // Frame interpolation
-    m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>("Frame Interpolation", m_FrameInterpolation, 
+    m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>("Frame Interpolation", m_FrameInterpolation, m_FrameInterpolationAvailable,
         [this](bool, bool)
         {
             m_OfUiEnabled = m_FrameInterpolation && s_enableSoftwareMotionEstimation;
@@ -480,6 +548,7 @@ void FSRRenderModule::InitUI(UISection* pUISection)
         false));
 
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>("Support Async Compute", m_PendingEnableAsyncCompute,
+        m_AsyncComputeAvailable,
         [this](bool, bool) 
         {
             // Ask main loop to re-initialize.
@@ -489,7 +558,9 @@ void FSRRenderModule::InitUI(UISection* pUISection)
 
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>("Allow async compute", m_AllowAsyncCompute, m_PendingEnableAsyncCompute, nullptr, false));
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>("Use callback", m_UseCallback, m_FrameInterpolation, nullptr, false));
+    m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>("Use Distortion Field Input", m_UseDistortionField, m_FrameInterpolation, nullptr, false));
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>("Draw frame generation tear lines", m_DrawFrameGenerationDebugTearLines, m_FrameInterpolation, nullptr, false));
+    m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>("Draw frame generation pacing lines", m_DrawFrameGenerationDebugPacingLines, m_FrameInterpolation, nullptr, false));
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>("Draw frame generation reset indicators", m_DrawFrameGenerationDebugResetIndicators, m_FrameInterpolation, nullptr, false));
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>("Draw frame generation debug view", m_DrawFrameGenerationDebugView, m_FrameInterpolation, nullptr, false));
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>("Present interpolated only", m_PresentInterpolatedOnly, m_FrameInterpolation, nullptr, false));
@@ -499,16 +570,12 @@ void FSRRenderModule::InitUI(UISection* pUISection)
     std::vector<const char*>        uiRenderModeLabels = { "No UI handling (not recommended)", "UiTexture", "UiCallback", "Pre-Ui Backbuffer" };
     m_UIElements.emplace_back(pUISection->RegisterUIElement<UICombo>(
         "UI Composition Mode",
-        s_uiRenderMode,
+        s_uiRenderModeNextFrame,
         uiRenderModeLabels, 
         m_FrameInterpolation,
         [this](int32_t, int32_t) 
         {
-            UIRenderModule* uimod = static_cast<UIRenderModule*>(GetFramework()->GetRenderModule("UIRenderModule"));
-            uimod->SetAsyncRender(s_uiRenderMode == 2);
-            uimod->SetRenderToTexture(s_uiRenderMode == 1);
-            uimod->SetCopyHudLessTexture(s_uiRenderMode == 3);
-
+            // Ask main loop to re-initialize at start of next frame. Next frame set s_uiRenderMode = s_uiRenderModeNextFrame.
             m_NeedReInit = true;
         },
         false));
@@ -519,7 +586,7 @@ void FSRRenderModule::InitUI(UISection* pUISection)
         "WaitCallback Mode",
         m_waitCallbackMode,
         waitCallbackModeLabels,
-        m_EnableMaskOptions,
+        m_EnableWaitCallbackModeUI,
         [this](int32_t, int32_t)
         {
 #if defined(FFX_API_DX12)
@@ -534,13 +601,106 @@ void FSRRenderModule::InitUI(UISection* pUISection)
             }
             else if (m_waitCallbackMode == 1)
             {
-                //FuncWithinStruct waitCallbackStruct = { &waitCallback };
                 m_swapchainKeyValueConfig.ptr = waitCallback;
             }
             ffx::Configure(m_SwapChainContext, m_swapchainKeyValueConfig);
 
         },
         m_EnableMaskOptions));
+
+
+    m_UIElements.emplace_back(pUISection->RegisterUIElement<UISlider<float>>(
+        "Frame Pacing safetyMarginInMs",
+        m_SafetyMarginInMs,
+        0.0f, 1.0f,
+        m_FrameInterpolation,
+        [this](float, float) {
+#if defined(FFX_API_DX12)
+            ffx::ConfigureDescFrameGenerationSwapChainKeyValueDX12 m_swapchainKeyValueConfig{};
+#elif defined(FFX_API_VK)
+            ffx::ConfigureDescFrameGenerationSwapChainKeyValueVK m_swapchainKeyValueConfig{};
+#endif
+            m_swapchainKeyValueConfig.key = FFX_API_CONFIGURE_FG_SWAPCHAIN_KEY_FRAMEPACINGTUNING;
+            m_swapchainKeyValueConfig.ptr = &framePacingTuning;
+
+            framePacingTuning.safetyMarginInMs = m_SafetyMarginInMs;
+
+            ffx::Configure(m_SwapChainContext, m_swapchainKeyValueConfig);
+        },
+        m_FrameInterpolation));
+    m_UIElements.emplace_back(pUISection->RegisterUIElement<UISlider<float>>(
+        "Frame Pacing varianceFactor",
+        m_VarianceFactor,
+        0.0f, 1.0f,
+        m_FrameInterpolation,
+        [this](float, float) {
+#if defined(FFX_API_DX12)
+            ffx::ConfigureDescFrameGenerationSwapChainKeyValueDX12 m_swapchainKeyValueConfig{};
+#elif defined(FFX_API_VK)
+            ffx::ConfigureDescFrameGenerationSwapChainKeyValueVK m_swapchainKeyValueConfig{};
+#endif
+            m_swapchainKeyValueConfig.key = FFX_API_CONFIGURE_FG_SWAPCHAIN_KEY_FRAMEPACINGTUNING;
+            m_swapchainKeyValueConfig.ptr = &framePacingTuning;
+
+            framePacingTuning.varianceFactor = m_VarianceFactor;
+
+            ffx::Configure(m_SwapChainContext, m_swapchainKeyValueConfig);
+        },
+        m_FrameInterpolation));
+    m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>(
+        "Frame Pacing allowHybridSpin", 
+        m_AllowHybridSpin, 
+        m_FrameInterpolation,
+        [this](bool, bool) {
+#if defined(FFX_API_DX12)
+            ffx::ConfigureDescFrameGenerationSwapChainKeyValueDX12 m_swapchainKeyValueConfig{};
+#elif defined(FFX_API_VK)
+            ffx::ConfigureDescFrameGenerationSwapChainKeyValueVK m_swapchainKeyValueConfig{};
+#endif
+            m_swapchainKeyValueConfig.key = FFX_API_CONFIGURE_FG_SWAPCHAIN_KEY_FRAMEPACINGTUNING;
+            m_swapchainKeyValueConfig.ptr = &framePacingTuning;
+
+            framePacingTuning.allowHybridSpin = m_AllowHybridSpin;
+
+            ffx::Configure(m_SwapChainContext, m_swapchainKeyValueConfig);
+        }));
+    m_UIElements.emplace_back(pUISection->RegisterUIElement<UISlider<int32_t>>(
+        "hybridSpinTime in timer resolution units",
+        (int32_t&) m_HybridSpinTime,
+        0, 10,
+        m_FrameInterpolation,
+        [this](int32_t, int32_t) {
+#if defined(FFX_API_DX12)
+            ffx::ConfigureDescFrameGenerationSwapChainKeyValueDX12 m_swapchainKeyValueConfig{};
+#elif defined(FFX_API_VK)
+            ffx::ConfigureDescFrameGenerationSwapChainKeyValueVK m_swapchainKeyValueConfig{};
+#endif
+            m_swapchainKeyValueConfig.key = FFX_API_CONFIGURE_FG_SWAPCHAIN_KEY_FRAMEPACINGTUNING;
+            m_swapchainKeyValueConfig.ptr = &framePacingTuning;
+
+            framePacingTuning.hybridSpinTime = m_HybridSpinTime;
+
+            ffx::Configure(m_SwapChainContext, m_swapchainKeyValueConfig);
+        },
+        m_FrameInterpolation));
+    m_UIElements.emplace_back(pUISection->RegisterUIElement<UICheckBox>(
+        "allowWaitForSingleObjectOnFence",
+        m_AllowWaitForSingleObjectOnFence,
+        m_FrameInterpolation,
+        [this](bool, bool) {
+#if defined(FFX_API_DX12)
+            ffx::ConfigureDescFrameGenerationSwapChainKeyValueDX12 m_swapchainKeyValueConfig{};
+#elif defined(FFX_API_VK)
+            ffx::ConfigureDescFrameGenerationSwapChainKeyValueVK m_swapchainKeyValueConfig{};
+#endif
+            m_swapchainKeyValueConfig.key = FFX_API_CONFIGURE_FG_SWAPCHAIN_KEY_FRAMEPACINGTUNING;
+            m_swapchainKeyValueConfig.ptr = &framePacingTuning;
+
+            framePacingTuning.allowWaitForSingleObjectOnFence = m_AllowWaitForSingleObjectOnFence;
+
+            ffx::Configure(m_SwapChainContext, m_swapchainKeyValueConfig);
+        }));
+
     EnableModule(true);
 }
 
@@ -572,6 +732,8 @@ void FSRRenderModule::SwitchUpscaler(int32_t newUpscaler)
         CauldronCritical(L"Unsupported upscaler requested.");
         break;
     }
+
+    m_EnableWaitCallbackModeUI = m_EnableMaskOptions && m_FrameInterpolationAvailable;
 
     m_UpscaleMethod = newUpscaler;
 
@@ -740,19 +902,19 @@ void FSRRenderModule::UpdateFSRContext(bool enabled)
                 createFsr.flags |= FFX_UPSCALE_ENABLE_DEPTH_INVERTED | FFX_UPSCALE_ENABLE_DEPTH_INFINITE;
             }
             createFsr.flags |= FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE;
+            createFsr.fpMessage = nullptr;
 
-            // Do eror checking in debug
-    #if defined(_DEBUG)
-            createFsr.flags |= FFX_UPSCALE_ENABLE_DEBUG_CHECKING;
-            createFsr.fpMessage = &FSRRenderModule::FfxMsgCallback;
-    #endif  // #if defined(_DEBUG)
+            if (m_GlobalDebugCheckerMode != FSRDebugCheckerMode::Disabled)
+            {
+                createFsr.flags |= FFX_UPSCALE_ENABLE_DEBUG_CHECKING;
+            }
 
             // Create the FSR context
             {
                 ffx::ReturnCode retCode;
                 // lifetime of this must last until after CreateContext call!
                 ffx::CreateContextDescOverrideVersion versionOverride{};
-                if (m_FsrVersionIndex < m_FsrVersionIds.size())
+                if (m_FsrVersionIndex < m_FsrVersionIds.size() && m_overrideVersion)
                 {
                     versionOverride.versionId = m_FsrVersionIds[m_FsrVersionIndex];
                     retCode = ffx::CreateContext(m_UpscalingContext, nullptr, createFsr, backendDesc, versionOverride);
@@ -764,27 +926,68 @@ void FSRRenderModule::UpdateFSRContext(bool enabled)
 
                 CauldronAssert(ASSERT_CRITICAL, retCode == ffx::ReturnCode::Ok, L"Couldn't create the ffxapi upscaling context: %d", (uint32_t)retCode);
             }
+            
+            //Query created version
+            ffxQueryGetProviderVersion getVersion = {0};
+            getVersion.header.type                = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
+
+            ffx::Query(m_UpscalingContext, getVersion);
+            m_currentUpscaleContextVersionId = getVersion.versionId;
+            m_currentUpscaleContextVersionName = getVersion.versionName;
+
+            CAUDRON_LOG_INFO(L"Upscaler Context versionid 0x%016llx, %S", m_currentUpscaleContextVersionId, m_currentUpscaleContextVersionName);
+
+            for (uint32_t i = 0; i < m_FsrVersionIds.size(); i++)
+            {
+                if (m_FsrVersionIds[i] == m_currentUpscaleContextVersionId)
+                {
+                    m_FsrVersionIndex = i;
+                }
+            }
+
+            FfxApiEffectMemoryUsage gpuMemoryUsageUpscaler;
+            ffx::QueryDescUpscaleGetGPUMemoryUsage upscalerGetGPUMemoryUsage{};
+            upscalerGetGPUMemoryUsage.gpuMemoryUsageUpscaler = &gpuMemoryUsageUpscaler;
+
+            ffx::Query(m_UpscalingContext, upscalerGetGPUMemoryUsage);
+
+            CAUDRON_LOG_INFO(L"Upscaler Context VRAM totalUsageInBytes %f MB aliasableUsageInBytes %f MB", gpuMemoryUsageUpscaler.totalUsageInBytes / 1048576.f, gpuMemoryUsageUpscaler.aliasableUsageInBytes / 1048576.f);
+
         }
 
         // Create the FrameGen context
+        if (m_FrameInterpolationAvailable)
         {
             ffx::CreateContextDescFrameGeneration createFg{};
-            createFg.displaySize = {resInfo.DisplayWidth, resInfo.DisplayHeight};
-            createFg.maxRenderSize = {resInfo.DisplayWidth, resInfo.DisplayHeight};
+            createFg.displaySize = { resInfo.DisplayWidth, resInfo.DisplayHeight };
+            createFg.maxRenderSize = { resInfo.DisplayWidth, resInfo.DisplayHeight };
             if (s_InvertedDepth)
                 createFg.flags |= FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED | FFX_FRAMEGENERATION_ENABLE_DEPTH_INFINITE;
             createFg.flags |= FFX_FRAMEGENERATION_ENABLE_HIGH_DYNAMIC_RANGE;
-            
+
             m_EnableAsyncCompute = m_PendingEnableAsyncCompute;
             if (m_EnableAsyncCompute)
             {
                 createFg.flags |= FFX_FRAMEGENERATION_ENABLE_ASYNC_WORKLOAD_SUPPORT;
             }
+            if (m_GlobalDebugCheckerMode != FSRDebugCheckerMode::Disabled)
+            {
+                createFg.flags |= FFX_FRAMEGENERATION_ENABLE_DEBUG_CHECKING;
+            }
 
             createFg.backBufferFormat = SDKWrapper::GetFfxSurfaceFormat(GetFramework()->GetSwapChain()->GetSwapChainFormat());
+            ffx::ReturnCode retCode;
+            if (s_uiRenderMode == 3)
+            {
+                ffx::CreateContextDescFrameGenerationHudless createFgHudless{};
+                createFgHudless.hudlessBackBufferFormat = SDKWrapper::GetFfxSurfaceFormat(m_pHudLessTexture[0]->GetResource()->GetTextureResource()->GetFormat());
+                retCode = ffx::CreateContext(m_FrameGenContext, nullptr, createFg, backendDesc, createFgHudless);
+            }
+            else
+            {
+                retCode = ffx::CreateContext(m_FrameGenContext, nullptr, createFg, backendDesc);
+            }
 
-            // create the context. We can reuse the backend description. TODO: this relies on an implementation detail we may not want to expose.
-            ffx::ReturnCode retCode = ffx::CreateContext(m_FrameGenContext, nullptr, createFg, backendDesc);
             CauldronAssert(ASSERT_CRITICAL, retCode == ffx::ReturnCode::Ok, L"Couldn't create the ffxapi framegen context: %d", (uint32_t)retCode);
 
             void* ffxSwapChain;
@@ -820,44 +1023,69 @@ void FSRRenderModule::UpdateFSRContext(bool enabled)
 
             retCode = ffx::Configure(m_FrameGenContext, m_FrameGenerationConfig);
             CauldronAssert(ASSERT_CRITICAL, retCode == ffx::ReturnCode::Ok, L"Couldn't create the ffxapi upscaling context: %d", (uint32_t)retCode);
+            
+            FfxApiEffectMemoryUsage gpuMemoryUsageFrameGeneration;
+            ffx::QueryDescFrameGenerationGetGPUMemoryUsage frameGenGetGPUMemoryUsage{};
+            frameGenGetGPUMemoryUsage.gpuMemoryUsageFrameGeneration = &gpuMemoryUsageFrameGeneration;
+            ffx::Query(m_FrameGenContext, frameGenGetGPUMemoryUsage);
+
+            CAUDRON_LOG_INFO(L"FrameGeneration Context VRAM totalUsageInBytes %f MB aliasableUsageInBytes %f MB", gpuMemoryUsageFrameGeneration.totalUsageInBytes / 1048576.f, gpuMemoryUsageFrameGeneration.aliasableUsageInBytes / 1048576.f);
+
+
+            FfxApiEffectMemoryUsage gpuMemoryUsageFrameGenerationSwapchain;
+#if defined(FFX_API_DX12)
+            ffx::QueryFrameGenerationSwapChainGetGPUMemoryUsageDX12 frameGenSwapchainGetGPUMemoryUsage{};
+            frameGenSwapchainGetGPUMemoryUsage.gpuMemoryUsageFrameGenerationSwapchain = &gpuMemoryUsageFrameGenerationSwapchain;
+            ffx::Query(m_SwapChainContext, frameGenSwapchainGetGPUMemoryUsage);
+#elif defined(FFX_API_VK)
+            ffx::QueryFrameGenerationSwapChainGetGPUMemoryUsageVK frameGenSwapchainGetGPUMemoryUsage{};
+            frameGenSwapchainGetGPUMemoryUsage.gpuMemoryUsageFrameGenerationSwapchain = &gpuMemoryUsageFrameGenerationSwapchain;
+            ffx::Query(m_SwapChainContext, frameGenSwapchainGetGPUMemoryUsage);
+#endif  // defined(FFX_API_DX12)
+            CAUDRON_LOG_INFO(L"Swapchain Context VRAM totalUsageInBytes %f MB aliasableUsageInBytes %f MB", gpuMemoryUsageFrameGenerationSwapchain.totalUsageInBytes / 1048576.f, gpuMemoryUsageFrameGenerationSwapchain.aliasableUsageInBytes / 1048576.f);
         }
     }
     else
     {
-        void* ffxSwapChain;
+        if (m_FrameInterpolationAvailable)
+        {
+            void* ffxSwapChain;
 #if defined(FFX_API_DX12)
-        ffxSwapChain = GetSwapChain()->GetImpl()->DX12SwapChain();
+            ffxSwapChain = GetSwapChain()->GetImpl()->DX12SwapChain();
 #elif defined(FFX_API_VK)
-        ffxSwapChain = GetSwapChain()->GetImpl()->VKSwapChain();
+            ffxSwapChain = GetSwapChain()->GetImpl()->VKSwapChain();
 #endif  // defined(FFX_API_DX12)
 
-        // disable frame generation before destroying context
-        // also unset present callback, HUDLessColor and UiTexture to have the swapchain only present the backbuffer
-        m_FrameGenerationConfig.frameGenerationEnabled = false;
-        m_FrameGenerationConfig.swapChain              = ffxSwapChain;
-        m_FrameGenerationConfig.presentCallback        = nullptr;
-        m_FrameGenerationConfig.HUDLessColor           = FfxApiResource({});
-        ffx::Configure(m_FrameGenContext, m_FrameGenerationConfig);
+            // disable frame generation before destroying context
+            // also unset present callback, HUDLessColor and UiTexture to have the swapchain only present the backbuffer
+            m_FrameGenerationConfig.frameGenerationEnabled = false;
+            m_FrameGenerationConfig.swapChain = ffxSwapChain;
+            m_FrameGenerationConfig.presentCallback = nullptr;
+            m_FrameGenerationConfig.HUDLessColor = FfxApiResource({});
+            ffx::Configure(m_FrameGenContext, m_FrameGenerationConfig);
 
 #if defined(FFX_API_DX12)
-        ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceDX12 uiConfig{};
-        uiConfig.uiResource = {};
-        uiConfig.flags = 0;
-        ffx::Configure(m_SwapChainContext, uiConfig);
+            ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceDX12 uiConfig{};
+            uiConfig.uiResource = {};
+            uiConfig.flags = 0;
+            ffx::Configure(m_SwapChainContext, uiConfig);
 #elif defined(FFX_API_VK)
-        ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceVK uiConfig{};
-        uiConfig.uiResource = {};
-        ffx::Configure(m_SwapChainContext, uiConfig);
+            ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceVK uiConfig{};
+            uiConfig.uiResource = {};
+            ffx::Configure(m_SwapChainContext, uiConfig);
 #endif  // defined(FFX_API_DX12)
+            
+            ffx::DestroyContext(m_FrameGenContext);
+            m_FrameGenContext = nullptr;
+        }
 
-        // Destroy the contexts
         if (m_UpscalingContext)
         {
             ffx::DestroyContext(m_UpscalingContext);
             m_UpscalingContext = nullptr;
         }
-        ffx::DestroyContext(m_FrameGenContext);
     }
+    
 }
 
 void FSRRenderModule::SetUpscaleConstantBuffer(uint64_t key, float value)
@@ -866,6 +1094,52 @@ void FSRRenderModule::SetUpscaleConstantBuffer(uint64_t key, float value)
     m_upscalerKeyValueConfig.key = key;
     m_upscalerKeyValueConfig.ptr = &value;
     ffx::Configure(m_UpscalingContext, m_upscalerKeyValueConfig);
+}
+
+void FSRRenderModule::SetGlobalDebugCheckerMode(FSRDebugCheckerMode mode, bool recreate)
+{
+    if (m_UpscalingContext)
+    {
+        ffx::ConfigureDescGlobalDebug1 m_GlobalDebugConfig{};
+        m_GlobalDebugConfig.debugLevel = 0; //not implemented. Value doesn't matter.
+        if (mode == FSRDebugCheckerMode::Disabled || mode == FSRDebugCheckerMode::EnabledNoMessageCallback)
+        {
+            m_GlobalDebugConfig.fpMessage = nullptr;
+        }
+        else if (mode == FSRDebugCheckerMode::EnabledWithMessageCallback)
+        {
+            m_GlobalDebugConfig.fpMessage = &FSRRenderModule::FfxMsgCallback;
+        }
+        if (recreate)
+        {
+            // Ask main loop to re-initialize.
+            m_NeedReInit = true;
+        }
+
+        ffx::ReturnCode retCode = ffx::Configure(m_UpscalingContext, m_GlobalDebugConfig);
+        CauldronAssert(ASSERT_ERROR, retCode == ffx::ReturnCode::Ok, L"Couldn't configure global debug config on the ffxapi upscaling context: %d", (uint32_t)retCode);
+    }
+    if (m_FrameGenContext)
+    {
+        ffx::ConfigureDescGlobalDebug1 m_GlobalDebugConfig{};
+        m_GlobalDebugConfig.debugLevel = 0; //not implemented. Value doesn't matter.
+        if (mode == FSRDebugCheckerMode::Disabled || mode == FSRDebugCheckerMode::EnabledNoMessageCallback)
+        {
+            m_GlobalDebugConfig.fpMessage = nullptr;
+        }
+        else if (mode == FSRDebugCheckerMode::EnabledWithMessageCallback)
+        {
+            m_GlobalDebugConfig.fpMessage = &FSRRenderModule::FfxMsgCallback;
+        }
+        if (recreate)
+        {
+            // Ask main loop to re-initialize.
+            m_NeedReInit = true;
+        }
+
+        ffx::ReturnCode retCode = ffx::Configure(m_FrameGenContext, m_GlobalDebugConfig);
+        CauldronAssert(ASSERT_ERROR, retCode == ffx::ReturnCode::Ok, L"Couldn't configure global debug config on the ffxapi frame generation context: %d", (uint32_t)retCode);
+    }
 }
 
 ResolutionInfo FSRRenderModule::UpdateResolution(uint32_t displayWidth, uint32_t displayHeight)
@@ -882,9 +1156,20 @@ void FSRRenderModule::OnPreFrame()
     if (NeedsReInit())
     {
         GetDevice()->FlushAllCommandQueues();
+        if (m_FrameInterpolationAvailable)
+        {
+#if defined(FFX_API_DX12)
+            ffx::DispatchDescFrameGenerationSwapChainWaitForPresentsDX12 waitForPresentsDesc;
+#elif defined(FFX_API_VK)
+            ffx::DispatchDescFrameGenerationSwapChainWaitForPresentsVK waitForPresentsDesc;
+#endif
+            ffx::ReturnCode errorCode = ffx::Dispatch(m_SwapChainContext, waitForPresentsDesc);
+            CauldronAssert(ASSERT_CRITICAL, errorCode == ffx::ReturnCode::Ok, L"OnPreFrame FrameGenerationSwapChain WaitForPresents failed: %d", (uint32_t)errorCode);
+        }
 
         // Need to recreate the FSR context
         EnableModule(false);
+        s_uiRenderMode = s_uiRenderModeNextFrame;
         EnableModule(true);
 
         ClearReInit();
@@ -976,11 +1261,11 @@ void FSRRenderModule::Execute(double deltaTime, CommandList* pCmdList)
 #elif defined(FFX_API_VK)
         dispatchUpscale.commandList = pCmdList->GetImpl()->VKCmdBuffer();
 #endif  // defined(FFX_API_DX12)
-        dispatchUpscale.color         = SDKWrapper::ffxGetResourceApi(m_pTempTexture->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-        dispatchUpscale.depth         = SDKWrapper::ffxGetResourceApi(m_pDepthTarget->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+        dispatchUpscale.color = SDKWrapper::ffxGetResourceApi(m_pTempTexture->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+        dispatchUpscale.depth = SDKWrapper::ffxGetResourceApi(m_pDepthTarget->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
         dispatchUpscale.motionVectors = SDKWrapper::ffxGetResourceApi(m_pMotionVectors->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-        dispatchUpscale.exposure      = SDKWrapper::ffxGetResourceApi(nullptr, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-        dispatchUpscale.output        = SDKWrapper::ffxGetResourceApi(m_pColorTarget->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+        dispatchUpscale.exposure = SDKWrapper::ffxGetResourceApi(nullptr, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+        dispatchUpscale.output = SDKWrapper::ffxGetResourceApi(m_pColorTarget->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 
         if (m_MaskMode != FSRMaskMode::Disabled)
         {
@@ -1002,21 +1287,21 @@ void FSRRenderModule::Execute(double deltaTime, CommandList* pCmdList)
         }
 
         // Jitter is calculated earlier in the frame using a callback from the camera update
-        dispatchUpscale.jitterOffset.x      = -m_JitterX;
-        dispatchUpscale.jitterOffset.y      = -m_JitterY;
+        dispatchUpscale.jitterOffset.x = -m_JitterX;
+        dispatchUpscale.jitterOffset.y = -m_JitterY;
         dispatchUpscale.motionVectorScale.x = resInfo.fRenderWidth();
         dispatchUpscale.motionVectorScale.y = resInfo.fRenderHeight();
-        dispatchUpscale.reset               = m_ResetUpscale || GetScene()->GetCurrentCamera()->WasCameraReset();
-        dispatchUpscale.enableSharpening    = m_RCASSharpen;
-        dispatchUpscale.sharpness           = m_Sharpness;
+        dispatchUpscale.reset = m_ResetUpscale || GetScene()->GetCurrentCamera()->WasCameraReset();
+        dispatchUpscale.enableSharpening = m_RCASSharpen;
+        dispatchUpscale.sharpness = m_Sharpness;
 
         // Cauldron keeps time in seconds, but FSR expects milliseconds
         dispatchUpscale.frameTimeDelta = static_cast<float>(deltaTime * 1000.f);
 
-        dispatchUpscale.preExposure        = GetScene()->GetSceneExposure();
-        dispatchUpscale.renderSize.width   = resInfo.RenderWidth;
-        dispatchUpscale.renderSize.height  = resInfo.RenderHeight;
-        dispatchUpscale.upscaleSize.width  = resInfo.UpscaleWidth;
+        dispatchUpscale.preExposure = GetScene()->GetSceneExposure();
+        dispatchUpscale.renderSize.width = resInfo.RenderWidth;
+        dispatchUpscale.renderSize.height = resInfo.RenderHeight;
+        dispatchUpscale.upscaleSize.width = resInfo.UpscaleWidth;
         dispatchUpscale.upscaleSize.height = resInfo.UpscaleHeight;
 
         // Setup camera params as required
@@ -1040,111 +1325,133 @@ void FSRRenderModule::Execute(double deltaTime, CommandList* pCmdList)
         CauldronAssert(ASSERT_CRITICAL, !!retCode, L"Dispatching FSR upscaling failed: %d", (uint32_t)retCode);
     }
 
-    ffx::DispatchDescFrameGenerationPrepare dispatchFgPrep{};
+    if (m_FrameInterpolationAvailable)
+    {
+        ffx::DispatchDescFrameGenerationPrepare dispatchFgPrep{};
 
 #if defined(FFX_API_DX12)
-    dispatchFgPrep.commandList   = pCmdList->GetImpl()->DX12CmdList();
+        dispatchFgPrep.commandList = pCmdList->GetImpl()->DX12CmdList();
 #elif defined(FFX_API_VK)
-    dispatchFgPrep.commandList   = pCmdList->GetImpl()->VKCmdBuffer();
+        dispatchFgPrep.commandList = pCmdList->GetImpl()->VKCmdBuffer();
 #endif  // defined(FFX_API_DX12)
-    dispatchFgPrep.depth = SDKWrapper::ffxGetResourceApi(m_pDepthTarget->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-    dispatchFgPrep.motionVectors = SDKWrapper::ffxGetResourceApi(m_pMotionVectors->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-    dispatchFgPrep.flags = 0;
-    
-    dispatchFgPrep.jitterOffset.x      = -m_JitterX;
-    dispatchFgPrep.jitterOffset.y      = -m_JitterY;
-    dispatchFgPrep.motionVectorScale.x = resInfo.fRenderWidth();
-    dispatchFgPrep.motionVectorScale.y = resInfo.fRenderHeight();
+        dispatchFgPrep.depth         = SDKWrapper::ffxGetResourceApi(m_pDepthTarget->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+        dispatchFgPrep.motionVectors = SDKWrapper::ffxGetResourceApi(m_pMotionVectors->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+        dispatchFgPrep.flags         = 0;
 
-    // Cauldron keeps time in seconds, but FSR expects milliseconds
-    dispatchFgPrep.frameTimeDelta = static_cast<float>(deltaTime * 1000.f);
-    
-    dispatchFgPrep.renderSize.width  = resInfo.RenderWidth;
-    dispatchFgPrep.renderSize.height = resInfo.RenderHeight;
-    dispatchFgPrep.cameraFovAngleVertical = pCamera->GetFovY();
+        dispatchFgPrep.jitterOffset.x      = -m_JitterX;
+        dispatchFgPrep.jitterOffset.y      = -m_JitterY;
+        dispatchFgPrep.motionVectorScale.x = resInfo.fRenderWidth();
+        dispatchFgPrep.motionVectorScale.y = resInfo.fRenderHeight();
 
-    if (s_InvertedDepth)
-    {
-        dispatchFgPrep.cameraFar  = pCamera->GetNearPlane();
-        dispatchFgPrep.cameraNear = FLT_MAX;
-    }
-    else
-    {
-        dispatchFgPrep.cameraFar  = pCamera->GetFarPlane();
-        dispatchFgPrep.cameraNear = pCamera->GetNearPlane();
-    }
-    dispatchFgPrep.viewSpaceToMetersFactor = 0.f;
-    dispatchFgPrep.frameID = m_FrameID;
+        // Cauldron keeps time in seconds, but FSR expects milliseconds
+        dispatchFgPrep.frameTimeDelta = static_cast<float>(deltaTime * 1000.f);
 
-    // Update frame generation config
-    FfxApiResource hudLessResource = SDKWrapper::ffxGetResourceApi(m_pHudLessTexture[m_curUiTextureIndex]->GetResource(),
-                                                        FFX_API_RESOURCE_STATE_COMPUTE_READ);
+        dispatchFgPrep.renderSize.width       = resInfo.RenderWidth;
+        dispatchFgPrep.renderSize.height      = resInfo.RenderHeight;
+        dispatchFgPrep.cameraFovAngleVertical = pCamera->GetFovY();
 
-    m_FrameGenerationConfig.frameGenerationEnabled = m_FrameInterpolation;
-    m_FrameGenerationConfig.flags                  = 0;
-    m_FrameGenerationConfig.flags |= m_DrawFrameGenerationDebugTearLines ? FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_TEAR_LINES : 0;
-    m_FrameGenerationConfig.flags |= m_DrawFrameGenerationDebugResetIndicators ? FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_RESET_INDICATORS : 0;
-    m_FrameGenerationConfig.flags |= m_DrawFrameGenerationDebugView ? FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_VIEW : 0;
-    dispatchFgPrep.flags = m_FrameGenerationConfig.flags; // TODO: maybe these should be distinct flags?
-    m_FrameGenerationConfig.HUDLessColor = (s_uiRenderMode == 3) ? hudLessResource : FfxApiResource({});
-    m_FrameGenerationConfig.allowAsyncWorkloads = m_AllowAsyncCompute && m_EnableAsyncCompute;
-    // assume symmetric letterbox
-    m_FrameGenerationConfig.generationRect.left   = (resInfo.DisplayWidth - resInfo.UpscaleWidth) / 2;
-    m_FrameGenerationConfig.generationRect.top    = (resInfo.DisplayHeight - resInfo.UpscaleHeight) / 2;
-    m_FrameGenerationConfig.generationRect.width  = resInfo.UpscaleWidth;
-    m_FrameGenerationConfig.generationRect.height = resInfo.UpscaleHeight;
-    if (m_UseCallback)
-    {
-        m_FrameGenerationConfig.frameGenerationCallback = [](ffxDispatchDescFrameGeneration* params, void* pUserCtx) -> ffxReturnCode_t
+        if (s_InvertedDepth)
         {
-            return ffxDispatch(reinterpret_cast<ffxContext*>(pUserCtx), &params->header);
-        };
-        m_FrameGenerationConfig.frameGenerationCallbackUserContext = &m_FrameGenContext;
-    }
-    else
-    {
-        m_FrameGenerationConfig.frameGenerationCallback = nullptr;
-        m_FrameGenerationConfig.frameGenerationCallbackUserContext = nullptr;
-    }
-    m_FrameGenerationConfig.onlyPresentGenerated = m_PresentInterpolatedOnly;
-    m_FrameGenerationConfig.frameID = m_FrameID;
+            dispatchFgPrep.cameraFar  = pCamera->GetNearPlane();
+            dispatchFgPrep.cameraNear = FLT_MAX;
+        }
+        else
+        {
+            dispatchFgPrep.cameraFar  = pCamera->GetFarPlane();
+            dispatchFgPrep.cameraNear = pCamera->GetNearPlane();
+        }
+        dispatchFgPrep.viewSpaceToMetersFactor = 0.f;
+        dispatchFgPrep.frameID                 = m_FrameID;
 
-    void* ffxSwapChain;
+        // Update frame generation config
+        FfxApiResource hudLessResource =
+            SDKWrapper::ffxGetResourceApi(m_pHudLessTexture[m_curUiTextureIndex]->GetResource(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+
+        m_FrameGenerationConfig.frameGenerationEnabled = m_FrameInterpolation;
+        m_FrameGenerationConfig.flags = 0u;
+        m_FrameGenerationConfig.flags |= m_DrawFrameGenerationDebugTearLines ? FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_TEAR_LINES : 0;
+        m_FrameGenerationConfig.flags |= m_DrawFrameGenerationDebugResetIndicators ? FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_RESET_INDICATORS : 0;
+        m_FrameGenerationConfig.flags |= m_DrawFrameGenerationDebugPacingLines ? FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_PACING_LINES : 0;
+        m_FrameGenerationConfig.flags |= m_DrawFrameGenerationDebugView ? FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_VIEW : 0;
+        dispatchFgPrep.flags = m_FrameGenerationConfig.flags;  // TODO: maybe these should be distinct flags?
+        m_FrameGenerationConfig.HUDLessColor        = (s_uiRenderMode == 3) ? hudLessResource : FfxApiResource({});
+        m_FrameGenerationConfig.allowAsyncWorkloads = m_AllowAsyncCompute && m_EnableAsyncCompute;
+        // assume symmetric letterbox
+        m_FrameGenerationConfig.generationRect.left   = (resInfo.DisplayWidth - resInfo.UpscaleWidth) / 2;
+        m_FrameGenerationConfig.generationRect.top    = (resInfo.DisplayHeight - resInfo.UpscaleHeight) / 2;
+        m_FrameGenerationConfig.generationRect.width  = resInfo.UpscaleWidth;
+        m_FrameGenerationConfig.generationRect.height = resInfo.UpscaleHeight;
+        if (m_UseCallback)
+        {
+            m_FrameGenerationConfig.frameGenerationCallback = [](ffxDispatchDescFrameGeneration* params, void* pUserCtx) -> ffxReturnCode_t {
+                return ffxDispatch(reinterpret_cast<ffxContext*>(pUserCtx), &params->header);
+            };
+            m_FrameGenerationConfig.frameGenerationCallbackUserContext = &m_FrameGenContext;
+        }
+        else
+        {
+            m_FrameGenerationConfig.frameGenerationCallback            = nullptr;
+            m_FrameGenerationConfig.frameGenerationCallbackUserContext = nullptr;
+        }
+        m_FrameGenerationConfig.onlyPresentGenerated = m_PresentInterpolatedOnly;
+        m_FrameGenerationConfig.frameID              = m_FrameID;
+
+        void* ffxSwapChain;
 #if defined(FFX_API_DX12)
-    ffxSwapChain = GetSwapChain()->GetImpl()->DX12SwapChain();
+        ffxSwapChain = GetSwapChain()->GetImpl()->DX12SwapChain();
 #elif defined(FFX_API_VK)
-    ffxSwapChain = GetSwapChain()->GetImpl()->VKSwapChain();
+        ffxSwapChain = GetSwapChain()->GetImpl()->VKSwapChain();
 #endif  // defined(FFX_API_DX12)
-    m_FrameGenerationConfig.swapChain = ffxSwapChain;
+        m_FrameGenerationConfig.swapChain = ffxSwapChain;
+        ffx::ReturnCode retCode           = ffx::ReturnCode::ErrorParameter;
 
-    ffx::ReturnCode retCode = ffx::Configure(m_FrameGenContext, m_FrameGenerationConfig);
-    CauldronAssert(ASSERT_CRITICAL, !!retCode, L"Configuring FSR FG failed: %d", (uint32_t)retCode);
+        if (m_UseDistortionField)
+        {
+            ffx::ConfigureDescFrameGenerationRegisterDistortionFieldResource dfConfig{};
+            dfConfig.distortionField =
+                SDKWrapper::ffxGetResourceApi(m_pDistortionField[m_curUiTextureIndex]->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+            retCode = ffx::Configure(m_FrameGenContext, m_FrameGenerationConfig, dfConfig);
+        }
+        else
+        {
+            retCode = ffx::Configure(m_FrameGenContext, m_FrameGenerationConfig);
+        }
 
-    retCode = ffx::Dispatch(m_FrameGenContext, dispatchFgPrep);
-    CauldronAssert(ASSERT_CRITICAL, !!retCode, L"Dispatching FSR FG (upscaling data) failed: %d", (uint32_t)retCode);
+        CauldronAssert(ASSERT_CRITICAL, !!retCode, L"Configuring FSR FG failed: %d", (uint32_t)retCode);
 
-    FfxApiResource uiColor = (s_uiRenderMode == 1)
-                                ? SDKWrapper::ffxGetResourceApi(m_pUiTexture[m_curUiTextureIndex]->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ)
-                                : FfxApiResource({});
+        ffx::DispatchDescFrameGenerationPrepareCameraInfo cameraConfig{};
+        memcpy(cameraConfig.cameraPosition, &pCamera->GetCameraPos(), 3 * sizeof(float));
+        memcpy(cameraConfig.cameraUp, &pCamera->GetCameraUp(), 3 * sizeof(float));
+        memcpy(cameraConfig.cameraRight, &pCamera->GetCameraRight(), 3 * sizeof(float));
+        memcpy(cameraConfig.cameraForward, &(pCamera->GetDirection().getXYZ()), 3 * sizeof(float));
+
+        retCode = ffx::Dispatch(m_FrameGenContext, dispatchFgPrep, cameraConfig);
+
+        CauldronAssert(ASSERT_CRITICAL, !!retCode, L"Dispatching FSR FG (upscaling data) failed: %d", (uint32_t)retCode);
+
+        FfxApiResource uiColor =
+            (s_uiRenderMode == 1) ? SDKWrapper::ffxGetResourceApi(m_pUiTexture[m_curUiTextureIndex]->GetResource(), FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ)
+                                  : FfxApiResource({});
 
 #if defined(FFX_API_DX12)
-    ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceDX12 uiConfig{};
-    uiConfig.uiResource = uiColor;
-    uiConfig.flags      = m_DoublebufferInSwapchain ? FFX_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING : 0;
-    ffx::Configure(m_SwapChainContext, uiConfig);
+        ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceDX12 uiConfig{};
+        uiConfig.uiResource = uiColor;
+        uiConfig.flags      = m_DoublebufferInSwapchain ? FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING : 0;
+        ffx::Configure(m_SwapChainContext, uiConfig);
 #elif defined(FFX_API_VK)
-    ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceVK uiConfig{};
-    uiConfig.uiResource = uiColor;
-    uiConfig.flags      = m_DoublebufferInSwapchain ? FFX_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING : 0;
-    ffx::Configure(m_SwapChainContext, uiConfig);
+        ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceVK uiConfig{};
+        uiConfig.uiResource = uiColor;
+        uiConfig.flags      = m_DoublebufferInSwapchain ? FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING : 0;
+        ffx::Configure(m_SwapChainContext, uiConfig);
 #endif  // defined(FFX_API_DX12)
+    }
 
     // Dispatch frame generation, if not using the callback
     if (m_FrameInterpolation && !m_UseCallback)
     {
         ffx::DispatchDescFrameGeneration dispatchFg{};
 
-        dispatchFg.presentColor       = backbuffer;
+        dispatchFg.presentColor = backbuffer;
         dispatchFg.numGeneratedFrames = 1;
 
         // assume symmetric letterbox
@@ -1172,9 +1479,10 @@ void FSRRenderModule::Execute(double deltaTime, CommandList* pCmdList)
 #endif  // defined(FFX_API_DX12)
 
         dispatchFg.frameID = m_FrameID;
-        dispatchFg.reset   = m_ResetFrameInterpolation;
+        dispatchFg.reset = m_ResetFrameInterpolation;
 
-        retCode = ffx::Dispatch(m_FrameGenContext, dispatchFg);
+        ffx::ReturnCode retCode = ffx::Dispatch(m_FrameGenContext, dispatchFg);
+        
         CauldronAssert(ASSERT_CRITICAL, !!retCode, L"Dispatching Frame Generation failed: %d", (uint32_t)retCode);
     }
 
@@ -1210,6 +1518,14 @@ void FSRRenderModule::PreTransCallback(double deltaTime, CommandList* pCmdList)
     barriers.push_back(Barrier::Transition(m_pCompositionMask->GetResource(), ResourceState::RenderTargetResource, ResourceState::NonPixelShaderResource | ResourceState::PixelShaderResource));
     ResourceBarrier(pCmdList, static_cast<uint32_t>(barriers.size()), barriers.data());
 
+    // update index for UI doublebuffering
+    UIRenderModule* uimod = static_cast<UIRenderModule*>(GetFramework()->GetRenderModule("UIRenderModule"));
+    m_curUiTextureIndex = (++m_curUiTextureIndex) & 1;
+    uimod->SetUiSurfaceIndex(m_curUiTextureIndex);
+
+    //update index for distortion texture doublebuffering
+    m_pToneMappingRenderModule->SetDoubleBufferedTextureIndex(m_curUiTextureIndex);
+
     if (m_MaskMode != FSRMaskMode::Auto)
         return;
 
@@ -1226,11 +1542,6 @@ void FSRRenderModule::PreTransCallback(double deltaTime, CommandList* pCmdList)
     barriers.push_back(Barrier::Transition(m_pColorTarget->GetResource(), ResourceState::CopySource, ResourceState::NonPixelShaderResource | ResourceState::PixelShaderResource));
     barriers.push_back(Barrier::Transition(m_pOpaqueTexture->GetResource(), ResourceState::CopyDest, ResourceState::NonPixelShaderResource | ResourceState::PixelShaderResource));
     ResourceBarrier(pCmdList, static_cast<uint32_t>(barriers.size()), barriers.data());
-
-    // update intex for UI doublebuffering
-    UIRenderModule* uimod = static_cast<UIRenderModule*>(GetFramework()->GetRenderModule("UIRenderModule"));
-    m_curUiTextureIndex   = m_DoublebufferInSwapchain ? 0 : (++m_curUiTextureIndex) & 1;
-    uimod->SetUiSurfaceIndex(m_curUiTextureIndex);
 }
 
 void FSRRenderModule::PostTransCallback(double deltaTime, CommandList* pCmdList)
@@ -1312,6 +1623,7 @@ void RestoreApplicationSwapChain(bool recreateSwapchain)
     }
     return;
 }
+
 #elif defined(FFX_API_VK)
 void RestoreApplicationSwapChain(bool recreateSwapchain)
 {
@@ -1332,3 +1644,6 @@ void RestoreApplicationSwapChain(bool recreateSwapchain)
     }
 }
 #endif
+
+#if defined(FFX_API_DX12)
+#endif // FFX_API_DX12

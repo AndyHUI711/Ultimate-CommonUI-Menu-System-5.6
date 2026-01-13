@@ -40,7 +40,7 @@
 /// FidelityFX Frameinterpolation patch version.
 ///
 /// @ingroup FRAMEINTERPOLATIONFRAMEINTERPOLATION
-#define FFX_FRAMEINTERPOLATION_VERSION_PATCH      (0)
+#define FFX_FRAMEINTERPOLATION_VERSION_PATCH      (3)
 
 /// FidelityFX Frame Interpolation context count
 ///
@@ -107,18 +107,20 @@ typedef enum FfxFrameInterpolationInitializationFlagBits {
     FFX_FRAMEINTERPOLATION_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS = (1<<4), ///< A bit indicating if the motion vectors are rendered at display resolution.
     FFX_FRAMEINTERPOLATION_ENABLE_JITTER_MOTION_VECTORS             = (1<<5),
     FFX_FRAMEINTERPOLATION_ENABLE_ASYNC_SUPPORT                     = (1<<6),
+    FFX_FRAMEINTERPOLATION_ENABLE_DEBUG_CHECKING                    = (1<<7), ///< A bit indicating that the runtime should check some API values and report issues.
 } FfxFrameInterpolationInitializationFlagBits;
 
 /// A structure encapsulating the parameters required to initialize
-/// FidelityFX Frameinterpolation upscaling.
+/// FidelityFX Frameinterpolation.
 ///
 /// @ingroup FRAMEINTERPOLATION
 typedef struct FfxFrameInterpolationContextDescription {
-    uint32_t                        flags;                  ///< A collection of <c><i>FfxFrameInterpolationInitializationFlagBits</i></c>.
-    FfxDimensions2D                 maxRenderSize;          ///< The maximum size that rendering will be performed at.
-    FfxDimensions2D                 displaySize;            ///< The size of the presentation resolution
-    FfxSurfaceFormat                backBufferFormat;
-    FfxInterface                    backendInterface;       ///< A set of pointers to the backend implementation for FidelityFX SDK
+    uint32_t                        flags;                             ///< A collection of <c><i>FfxFrameInterpolationInitializationFlagBits</i></c>.
+    FfxDimensions2D                 maxRenderSize;                     ///< The maximum size that rendering will be performed at.
+    FfxDimensions2D                 displaySize;                       ///< The size of the presentation resolution
+    FfxSurfaceFormat                backBufferFormat;                  ///< the format of the backbuffer
+    FfxSurfaceFormat                previousInterpolationSourceFormat; ///< the format of the texture that will store the interpolation source for the next frame. Can be different than the backbuffer one, especially when using hudless
+    FfxInterface                    backendInterface;                  ///< A set of pointers to the backend implementation for FidelityFX SDK
 } FfxFrameInterpolationContextDescription;
 
 /// A structure encapsulating the resource descriptions for shared resources for this effect.
@@ -199,6 +201,8 @@ FFX_API FfxErrorCode ffxFrameInterpolationContextGetGpuMemoryUsage(FfxFrameInter
 
 FFX_API FfxErrorCode ffxFrameInterpolationGetSharedResourceDescriptions(FfxFrameInterpolationContext* pContext, FfxFrameInterpolationSharedResourceDescriptions* SharedResources);
 
+FFX_API FfxErrorCode ffxSharedContextGetGpuMemoryUsage(FfxInterface* backendInterfaceShared, FfxEffectMemoryUsage* vramUsage);
+
 typedef struct FfxFrameInterpolationPrepareDescription
 {
     uint32_t            flags;                      ///< combination of FfxFrameInterpolationDispatchFlags
@@ -220,6 +224,12 @@ typedef struct FfxFrameInterpolationPrepareDescription
     FfxResource         dilatedDepth;                       ///< The dilated depth buffer data
     FfxResource         dilatedMotionVectors;               ///< The dilated motion vector data
     FfxResource         reconstructedPrevDepth;             ///< The reconstructed depth buffer data
+
+    FfxFloat32x3        cameraPosition;             ///< The camera position in world space
+    FfxFloat32x3        cameraUp;                   ///< The camera up normalized vector in world space.
+    FfxFloat32x3        cameraRight;                ///< The camera right normalized vector in world space.
+    FfxFloat32x3        cameraForward;              ///< The camera forward normalized vector in world space.
+
 } FfxFrameInterpolationPrepareDescription;
 
 FFX_API FfxErrorCode ffxFrameInterpolationPrepare(FfxFrameInterpolationContext* context, const FfxFrameInterpolationPrepareDescription* params);
@@ -229,6 +239,9 @@ typedef enum FfxFrameInterpolationDispatchFlags
     FFX_FRAMEINTERPOLATION_DISPATCH_DRAW_DEBUG_TEAR_LINES       = (1 << 0),  ///< A bit indicating that the debug tear lines will be drawn to the interpolated output.
     FFX_FRAMEINTERPOLATION_DISPATCH_DRAW_DEBUG_RESET_INDICATORS = (1 << 1),  ///< A bit indicating that the debug reset indicators will be drawn to the generated output.
     FFX_FRAMEINTERPOLATION_DISPATCH_DRAW_DEBUG_VIEW             = (1 << 2),  ///< A bit indicating that the interpolated output resource will contain debug views with relevant information.
+    FFX_FRAMEINTERPOLATION_DISPATCH_DRAW_DEBUG_PACING_LINES     = (1 << 3),  ///< A bit indicating that the debug pacing lines will be drawn to the generated output.
+    FFX_FRAMEINTERPOLATION_DISPATCH_RESERVED_1 = (1 << 4),
+    FFX_FRAMEINTERPOLATION_DISPATCH_RESERVED_2 = (1 << 5), 
 } FfxFrameInterpolationDispatchFlags;
 
 typedef struct FfxFrameInterpolationDispatchDescription {
@@ -264,6 +277,8 @@ typedef struct FfxFrameInterpolationDispatchDescription {
     FfxResource                         dilatedDepth;                       ///< The dilated depth buffer data
     FfxResource                         dilatedMotionVectors;               ///< The dilated motion vector data
     FfxResource                         reconstructedPrevDepth;             ///< The reconstructed depth buffer data
+
+    FfxResource                         distortionField;                    ///< A resource containing distortion offset data used when distortion post effects are enabled.
 } FfxFrameInterpolationDispatchDescription;
 
 FFX_API FfxErrorCode ffxFrameInterpolationDispatch(FfxFrameInterpolationContext* context, const FfxFrameInterpolationDispatchDescription* params);
@@ -287,6 +302,14 @@ FFX_API FfxErrorCode ffxFrameInterpolationContextDestroy(FfxFrameInterpolationCo
 ///
 /// @ingroup FRAMEINTERPOLATION
 FFX_API FfxVersionNumber ffxFrameInterpolationGetEffectVersion();
+
+/// Set global debug message settings
+///
+/// @retval
+/// FFX_OK                              The operation completed successfully.
+///
+/// @ingroup FRAMEINTERPOLATION
+FFX_API FfxErrorCode ffxFrameInterpolationSetGlobalDebugMessage(ffxMessageCallback fpMessage, uint32_t debugLevel);
 
 #if defined(__cplusplus)
 }

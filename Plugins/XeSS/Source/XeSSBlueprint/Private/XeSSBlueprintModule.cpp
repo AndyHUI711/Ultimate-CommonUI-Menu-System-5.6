@@ -22,35 +22,29 @@
 
 #include "XeSSBlueprintModule.h"
 
-#include "Misc/CoreDelegates.h"
-#include "Modules/ModuleManager.h"
 #include "XeSSBlueprintLibrary.h"
 
 #if WITH_XESS
 #include "XeSSModule.h"
 #endif
 
-void FXeSSBlueprint::StartupModule()
+FName FXeSSBlueprintModule::GetCoreModuleName() const
+{
+	return TEXT("XeSSCore");
+}
+
+void FXeSSBlueprintModule::OnCoreModuleLoaded(IModuleInterface* CoreModule)
 {
 #if WITH_XESS
-	FCoreDelegates::OnPostEngineInit.AddRaw(this, &FXeSSBlueprint::DelayInit);
+	UXeSSBlueprintLibrary::Init(static_cast<FXeSSModule*>(CoreModule));
 #endif
 }
 
-void FXeSSBlueprint::ShutdownModule()
+void FXeSSBlueprintModule::OnCoreModuleUnloaded()
 {
 #if WITH_XESS
-	FCoreDelegates::OnPostEngineInit.RemoveAll(this);
+	UXeSSBlueprintLibrary::Deinit();
 #endif
 }
 
-void FXeSSBlueprint::DelayInit()
-{
-	FXeSS* XeSS = nullptr;
-#if WITH_XESS
-	XeSS = &FModuleManager::LoadModuleChecked<FXeSS>(TEXT("XeSSCore"));
-#endif
-	UXeSSBlueprintLibrary::Init(XeSS);
-}
-
-IMPLEMENT_MODULE(FXeSSBlueprint, XeSSBlueprint)
+IMPLEMENT_MODULE(FXeSSBlueprintModule, XeSSBlueprint)

@@ -31,28 +31,21 @@ class UXeSSSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
 public:
-
 	UXeSSSettings();
 
 	/** This enables XeSS in editor viewports */
 	UPROPERTY(config, EditAnywhere, Category = "Editor", meta = (
 		DisplayName = "Allow Intel XeSS to be turned on in Editor viewports",
 		ToolTip = "Disabling will only allow to enable XeSS when running standalone game"))
-	bool bEnableXeSSInEditorViewports;
+	bool bEnableXeSSInEditorViewports = true;
 
-	UPROPERTY(config, EditAnywhere, Category = "Debug", meta = (
-		ConsoleVariable = "r.XeSS.FrameDump.Path",
-		DisplayName = "Intel XeSS debug data save location",
-		ToolTip = "Directory that will be used for debug images and data when r.XeSS.FrameDump.Start is called, can be changed with r.XeSS.FrameDump.Path"))
-	FString DebugDataDumpPath;
-
-	virtual void PostInitProperties() override;
-	virtual FName GetContainerName() const override;
-	virtual FName GetCategoryName() const override;
+	void PostInitProperties() override;
+	FName GetContainerName() const override;
+	FName GetCategoryName() const override;
 
 #if WITH_EDITOR
-	virtual FText GetSectionText() const override;
-	virtual FText GetSectionDescription() const override;
-	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
+	FText GetSectionText() const override;
+	FText GetSectionDescription() const override;
+	void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 };

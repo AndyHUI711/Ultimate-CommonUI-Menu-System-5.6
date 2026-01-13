@@ -25,13 +25,14 @@
 #include "XeSSCommonMacros.h"
 
 #include "CoreMinimal.h"
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <d3d12.h>  // NOLINT(build/include_order)
+#include "Windows/HideWindowsPlatformTypes.h"
 
 class FD3D12DynamicRHI;
+class FRHICommandListBase;
 class FRHITexture;
-struct ID3D12Device;
 struct ID3D12DynamicRHI;
-struct ID3D12GraphicsCommandList;
-struct ID3D12Resource;
 
 namespace XeSSUnreal
 {
@@ -44,6 +45,7 @@ namespace XeSSUnreal
 	XESSUNREAL_API ID3D12Device* GetDevice(XD3D12DynamicRHI* D3D12DynamicRHI);
 	XESSUNREAL_API ID3D12Resource* GetResource(XD3D12DynamicRHI* D3D12DynamicRHI, FRHITexture* Texture);
 
-	XESSUNREAL_API ID3D12GraphicsCommandList* RHIGetGraphicsCommandList(XD3D12DynamicRHI* D3D12DynamicRHI);
-	XESSUNREAL_API void RHIFinishExternalComputeWork(XD3D12DynamicRHI* D3D12DynamicRHI, ID3D12GraphicsCommandList* CommandList);
+	XESSUNREAL_API ID3D12CommandQueue* RHIGetCommandQueue(XD3D12DynamicRHI* D3D12DynamicRHI);
+	XESSUNREAL_API ID3D12GraphicsCommandList* RHIGetGraphicsCommandList(XD3D12DynamicRHI* D3D12DynamicRHI, FRHICommandListBase& ExecutingCmdList);
+	XESSUNREAL_API void RHIFinishExternalComputeWork(XD3D12DynamicRHI* D3D12DynamicRHI, FRHICommandListBase& ExecutingCmdList, ID3D12GraphicsCommandList* CommandList);
 }

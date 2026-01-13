@@ -25,6 +25,7 @@
 #include "XeSSCommonMacros.h"
 
 #include "CoreMinimal.h"
+#include "Containers/Ticker.h"
 #include "Math/MathFwd.h"
 
 #if ENGINE_MAJOR_VERSION < 5
@@ -34,5 +35,11 @@ using FVector2f = ::FVector2D;
 
 namespace XeSSUnreal
 {
+#if XESS_ENGINE_VERSION_GEQ(5, 0)
+	using XTSTickerObjectBase = ::FTSTickerObjectBase;
+#else
+	using XTSTickerObjectBase = ::FTickerObjectBase;
+#endif
+
 	XESSUNREAL_API void ApplyCVarSettingsFromIni(const TCHAR* InSectionBaseName, const TCHAR* InIniFilename, uint32 SetBy, bool bAllowCheating = false);
 }

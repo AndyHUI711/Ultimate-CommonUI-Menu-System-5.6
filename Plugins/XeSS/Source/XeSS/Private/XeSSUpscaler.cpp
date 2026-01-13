@@ -28,13 +28,14 @@
 #include "LegacyScreenPercentageDriver.h"
 #endif
 
-#include "ScenePrivate.h" // for FSceneViewState, FTemporalAAHistory
+#include "ScenePrivate.h"  // for FSceneViewState, FTemporalAAHistory
 #include "XeSSHistory.h"
 #include "XeSSPrePass.h"
 #include "XeSSRHI.h"
 #include "XeSSSettings.h"
 #include "XeSSUnrealCore.h"
 #include "XeSSUnrealRenderer.h"
+#include "XeSSUnrealRHI.h"
 #include "XeSSUtil.h"
 
 // It SHOULD be enough, for 0.001% * 7860 (8K) = 0.0786 (pixel)
@@ -76,6 +77,14 @@ static TAutoConsoleVariable<int32> CVarXeSSPreExposure(
 	ECVF_Default);
 
 DECLARE_GPU_STAT_NAMED(XeSS, TEXT("XeSS"));
+
+static void TriggerResourceTransitions(FRHICommandListImmediate& RHICmdList, TRDGBufferAccess<ERHIAccess::UAVCompute> DummyBufferAccess)
+{
+	XeSSUnreal::XRHIBuffer* DummyBuffer = XeSSUnreal::GetRHIBuffer(DummyBufferAccess);
+	// Using the dummy structured buffer to trigger a resource transition
+	XeSSUnreal::LockRHIBuffer(RHICmdList, DummyBuffer, 0, sizeof(float), EResourceLockMode::RLM_WriteOnly);
+	XeSSUnreal::UnlockRHIBuffer(RHICmdList, DummyBuffer);
+}
 
 FXeSSPassParameters::FXeSSPassParameters(const FViewInfo& View, const XeSSUnreal::XPassInputs& PassInputs)
 	: InputViewRect(View.ViewRect)
@@ -165,7 +174,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FXeSSShaderParameters, )
 	RDG_TEXTURE_ACCESS_DYNAMIC(SceneColorOutput)
 END_SHADER_PARAMETER_STRUCT()
 
-FRDGTextureRef FXeSSUpscaler::AddMainXeSSPass(
+FRDGTexture* FXeSSUpscaler::AddMainXeSSPass(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	const FXeSSPassParameters& Inputs,
@@ -177,12 +186,13 @@ FRDGTextureRef FXeSSUpscaler::AddMainXeSSPass(
 	check(Inputs.SceneVelocityTexture);
 
 	// HACK: exit if XeSS upscaler is not active, allows to have multiple upscalers loaded by project
-	// TODO: check if it could be replaced with "check"
+	// TODO(sunzhuoshi): check if it could be replaced with "check"
 	if (!IsXeSSEnabled())
 	{
 		return nullptr;
 	}
 
+	RDG_EVENT_SCOPE_STAT(GraphBuilder, XeSS, "XeSS");
 	RDG_GPU_STAT_SCOPE(GraphBuilder, XeSS);
 
 	FXeSSRHI* LocalXeSSRHI = UpscalerXeSSRHI;
@@ -200,17 +210,17 @@ FRDGTextureRef FXeSSUpscaler::AddMainXeSSPass(
 
 	FRDGTexture* OutputSceneColor = GraphBuilder.CreateTexture(
 		OutputColorDesc,
-		TEXT("XeSSOutputSceneColor"),
+		TEXT("XeSS::OutputSceneColor"),
 		ERDGTextureFlags::MultiFrame);
 
 	FXeSSShaderParameters* PassParameters = GraphBuilder.AllocParameters<FXeSSShaderParameters>();
 	PassParameters->InputColor = Inputs.SceneColorTexture;
 	PassParameters->InputVelocity = Inputs.SceneVelocityTexture;
 	PassParameters->SceneColorOutput = FRDGTextureAccess(OutputSceneColor, ERHIAccess::UAVCompute);
-	PassParameters->DummyBuffer = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc((uint32)sizeof(float), 1u), TEXT("ForceTransitionDummyBuffer"));
+	PassParameters->DummyBuffer = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(sizeof(float), 1u), TEXT("ForceTransitionDummyBuffer"));
 
 	GraphBuilder.AddPass(
-		RDG_EVENT_NAME("XeSS Main Pass"),
+		RDG_EVENT_NAME("XeSS::Main Pass"),
 		PassParameters,
 		ERDGPassFlags::Compute,
 		[bCameraCut, InitFlags, Inputs, JitterOffset, LocalXeSSRHI, PassParameters, QualitySetting](FRHICommandListImmediate& RHICmdList)
@@ -259,11 +269,11 @@ FRDGTextureRef FXeSSUpscaler::AddMainXeSSPass(
 			}
 
 			// Make sure all resource transitions barriers are executed before RHIExecuteXeSS is called
-			LocalXeSSRHI->TriggerResourceTransitions(RHICmdList, PassParameters->DummyBuffer);
+			TriggerResourceTransitions(RHICmdList, PassParameters->DummyBuffer);
 			RHICmdList.EnqueueLambda(
 				[LocalXeSSRHI, ExecArgsXeSS](FRHICommandListImmediate& Cmd)
 				{
-					LocalXeSSRHI->RHIExecuteXeSS(ExecArgsXeSS);
+					LocalXeSSRHI->RHIExecuteXeSS(ExecArgsXeSS, Cmd);
 				}
 			);
 		});
@@ -302,7 +312,7 @@ void FXeSSUpscaler::AddPasses(
 #endif
 {
 	RDG_EVENT_SCOPE(GraphBuilder, "XeSS Pass");
-	FRDGTextureRef SceneVelocityTexture = XESS_UNREAL_GET_PASS_INPUTS_TEXTURE(PassInputs, SceneVelocity);
+	FRDGTexture* SceneVelocityTexture = XESS_UNREAL_GET_PASS_INPUTS_TEXTURE(PassInputs, SceneVelocity);
 
 #if XESS_ENGINE_VERSION_GEQ(5, 3)
 	XeSSUnreal::XTemporalUpscaler::FOutputs Outputs{};
@@ -330,7 +340,7 @@ void FXeSSUpscaler::AddPasses(
 #endif
 
 	FXeSSPassParameters XeSSMainParameters(ViewInfo, PassInputs);
-	XeSSMainParameters.SceneVelocityTexture = AddVelocityFlatteningXeSSPass(GraphBuilder,
+	XeSSMainParameters.SceneVelocityTexture = AddXeSSFlattenVelocityPass(GraphBuilder,
 		XeSSMainParameters.SceneDepthTexture,
 		SceneVelocityTexture,
 		ViewInfo);
@@ -338,7 +348,7 @@ void FXeSSUpscaler::AddPasses(
 	const FTemporalAAHistory& InputHistory = ViewInfo.PrevViewInfo.TemporalAAHistory;
 	FTemporalAAHistory& OutputHistory = ViewInfo.ViewState->PrevFrameViewInfo.TemporalAAHistory;
 
-	const FRDGTextureRef XeSSOutput = AddMainXeSSPass(
+	FRDGTexture* const XeSSOutput = AddMainXeSSPass(
 		GraphBuilder,
 		ViewInfo,
 		XeSSMainParameters,
@@ -389,7 +399,7 @@ void FXeSSUpscaler::SetupMainGameViewFamily(FSceneViewFamily& ViewFamily)
 			const float ResolutionFraction = UpscalerXeSSRHI->GetOptimalResolutionFraction();
 			ViewFamily.SetScreenPercentageInterface(new FLegacyScreenPercentageDriver(
 				ViewFamily, ResolutionFraction
-	#if ENGINE_MAJOR_VERSION < 5 
+	#if ENGINE_MAJOR_VERSION < 5
 				, /*InAllowPostProcessSettingsScreenPercentage*/ false
 	#endif
 			));
@@ -405,7 +415,7 @@ void FXeSSUpscaler::SetupViewFamily(FSceneViewFamily& ViewFamily, TSharedPtr<ICu
 	{
 		return;
 	}
-	#if ENGINE_MAJOR_VERSION < 5 
+	#if ENGINE_MAJOR_VERSION < 5
 	checkf(GTemporalUpscaler == this, TEXT("GTemporalUpscaler is not set to a XeSS, please make sure no other upscaling plug is enabled."));
 	#endif
 	checkf(GCustomStaticScreenPercentage == this, TEXT("GCustomStaticScreenPercentage is not set to a XeSS, please make sure no other upscaling plug is enabled."));
@@ -461,7 +471,7 @@ FXeSSUpscaler::FXeSSUpscaler(FXeSSRHI* InXeSSRHI)
 #if XESS_ENGINE_VERSION_LSS(5, 1)
 	// Handle value set by ini file
 	HandleXeSSEnabledSet(CVarXeSSEnabled->AsVariable());
-	// NOTE: OnChangedCallback will always be called when set even if the value is not changed 
+	// NOTE: OnChangedCallback will always be called when set even if the value is not changed
 	CVarXeSSEnabled->AsVariable()->SetOnChangedCallback(FConsoleVariableDelegate::CreateRaw(this, &FXeSSUpscaler::HandleXeSSEnabledSet));
 #endif
 
@@ -489,7 +499,6 @@ FXeSSUpscaler::FXeSSUpscaler(FXeSSRHI* InXeSSRHI)
 		}
 #endif
 	}));
-
 }
 
 FXeSSUpscaler::~FXeSSUpscaler()
@@ -507,7 +516,7 @@ bool FXeSSUpscalerViewExtension::IsActiveThisFrame_Internal(const FSceneViewExte
 		return false;
 	}
 	#if WITH_EDITOR
-	if (GIsEditor) 
+	if (GIsEditor)
 	{
 		if (!IsXeSSEnabled || !GetDefault<UXeSSSettings>()->bEnableXeSSInEditorViewports)
 		{
@@ -515,19 +524,19 @@ bool FXeSSUpscalerViewExtension::IsActiveThisFrame_Internal(const FSceneViewExte
 		}
 		if (Context.Viewport->IsPlayInEditorViewport())
 		{
-			if (!GIsPlayInEditorWorld) 
+			if (!GIsPlayInEditorWorld)
 			{
 				return false;
 			}
 			return true;
 		}
-		else 
+		else
 		{
 			// Editor viewports not supported right now
 			return false;
 		}
 	}
-	else 
+	else
 	#endif
 	{
 		// Game viewport
@@ -550,7 +559,7 @@ bool FXeSSUpscalerViewExtension::IsActiveThisFrame_Internal(const FSceneViewExte
 				else
 				{
 					XeSSUtil::AddErrorMessageToScreen(
-						FString::Printf(TEXT("XeSS is off due to invalid screen percentage, supported range: %.3f - %.3f"), 
+						FString::Printf(TEXT("XeSS is off due to invalid screen percentage, supported range: %.3f - %.3f"),
 							MinUpsampleScreenPercentage, MaxUpsampleScreenPercentage),
 						XeSSUtil::ON_SCREEN_MESSAGE_KEY_INCORRECT_SCREEN_PERCENTAGE
 					);

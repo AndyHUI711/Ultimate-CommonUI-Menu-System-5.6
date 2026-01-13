@@ -26,23 +26,32 @@ public class XeSSPrePass : ModuleRules
 {
 	public XeSSPrePass(ReadOnlyTargetRules Target) : base(Target)
 	{
-		int EngineMajorVersion = ReadOnlyBuildVersion.Current.MajorVersion;
-
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
+		// For ScenePrivate.h
 		PrivateIncludePaths.Add(Path.Combine(EngineDirectory, "Source/Runtime/Renderer/Private"));
+		if (XeSSCommon.IsEngineVersionAtLeast(5, 6))
+		{
+			// For ScenePrivate.h
+			PrivateIncludePaths.Add(Path.Combine(EngineDirectory, "Source/Runtime/Renderer/Internal"));
+		}
 
 		PrivateDependencyModuleNames.AddRange(
-			new string[]
-			{
-				"Core",
+			new string[] {
 				"Engine",
 				"Renderer",
-				"RenderCore",
 				"Projects",
+				"RenderCore",
 				"RHI",
 
 				"XeSSCommon",
+			}
+		);
+
+		PublicDependencyModuleNames.AddRange(
+			new string[] {
+				"Core",
+
 				"XeSSUnreal"
 			}
 		);

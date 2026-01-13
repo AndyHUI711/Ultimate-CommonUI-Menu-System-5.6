@@ -26,47 +26,30 @@ public class XeSSBlueprint : ModuleRules
 {
 	public XeSSBlueprint(ReadOnlyTargetRules Target) : base(Target)
 	{
-		int EngineMajorVersion = ReadOnlyBuildVersion.Current.MajorVersion;
-		int EngineMinorVersion = ReadOnlyBuildVersion.Current.MinorVersion;
-
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		if (EngineMajorVersion < 5 || EngineMajorVersion == 5 && EngineMinorVersion < 3)
-		{
-			// For PostProcess/TemporalAA.h
-			PrivateIncludePaths.Add(Path.Combine(EngineDirectory, "Source/Runtime/Renderer/Private"));
-		}
-
 		PrivateDependencyModuleNames.AddRange(
-			new string[]
-			{
+			new string[] {
 				"Core",
 				"CoreUObject",
+
+				"XeSSCommon",
+			}
+		);
+
+		PublicDependencyModuleNames.AddRange(
+			new string[] {
 				"Engine",
-				"Renderer",
-				"RenderCore",
-				"Projects",
-				"RHI",
 			}
 		);
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
 			PublicDefinitions.Add("WITH_XESS=1");
-
-			PrivateIncludePaths.AddRange(
-				new string[]
-				{
-					Path.Combine(ModuleDirectory, "../XeSS/Private"),
-				}
-			);
-
 			PrivateDependencyModuleNames.AddRange(
-				new string[]
-				{
-					"IntelXeSS",
-					"XeSSCommon",
+				new string[] {
 					"XeSSCore",
+					"XeSSSDK",
 					"XeSSUnreal",
 				}
 			);
@@ -74,7 +57,7 @@ public class XeSSBlueprint : ModuleRules
 		else
 		{
 			PublicDefinitions.Add("WITH_XESS=0");
-			System.Console.WriteLine("XeSS not supported on this platform");
+			System.Console.WriteLine("NOTE: XeSS not supported on this platform: " + Target.Platform);
 		}
 	}
 }

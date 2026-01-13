@@ -24,67 +24,58 @@ using UnrealBuildTool;
 using System.IO;
 
 /*
- * NOTE: We cannot use 'XeSS' as the module name because `XESS_API` will conflict with the definition in `xess.h`. 
+ * NOTE: We cannot use 'XeSS' as the module name because `XESS_API` will conflict with the definition in XeSS SDK.
  * However, all other rules will remain the same as for the module name 'XeSS', including module folder name, file name prefixes, etc.
  */
 public class XeSSCore : ModuleRules
 {
 	public XeSSCore(ReadOnlyTargetRules Target) : base(Target)
 	{
-		int EngineMajorVersion = ReadOnlyBuildVersion.Current.MajorVersion;
-		int EngineMinorVersion = ReadOnlyBuildVersion.Current.MinorVersion;
-
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PrivateIncludePaths.AddRange(
-			new string[]
-			{
-				 Path.Combine(EngineDirectory, "Source/Runtime/Renderer/Private"),
-			}
-		);
+		// For PostProcess/TemporalAA.h, ScenePrivate.h
+		PrivateIncludePaths.Add(Path.Combine(EngineDirectory, "Source/Runtime/Renderer/Private"));
 
-		// No longer needed since Unreal 5.1
-		if (EngineMajorVersion < 5 || EngineMajorVersion == 5 && EngineMinorVersion < 1) 
+		if (XeSSCommon.IsEngineVersionAtLeast(5, 6))
+		{
+			PrivateIncludePaths.Add(Path.Combine(EngineDirectory, "Source/Runtime/Renderer/Internal"));
+		}
+		if (XeSSCommon.IsEngineVersionOlderThan(5, 3))
+		{
+			// For PostProcess/TemporalAA.h (included in XeSSUpscaler.h)
+			PublicIncludePaths.Add(Path.Combine(EngineDirectory, "Source/Runtime/Renderer/Private"));
+		}
+
+		if (XeSSCommon.IsEngineVersionOlderThan(5, 1))
 		{
 			// For D3D12RHIPrivate.h
 			PrivateIncludePaths.Add(Path.Combine(EngineDirectory, "Source/Runtime/D3D12RHI/Private"));
 		}
 
 		PrivateDependencyModuleNames.AddRange(
-			new string[]
-			{
-				"Core",
+			new string[] {
 				"CoreUObject",
 				"EngineSettings",
-				"Engine",
 				"Renderer",
 				"RenderCore",
 				"RHI",
-				"D3D12RHI",
 				"Projects",
 				"DeveloperSettings",
 
-				"IntelXeSS",
-				"XeSSCommon",
 				"XeSSPrePass",
+			}
+		);
+
+		PublicDependencyModuleNames.AddRange(
+			new string[] {
+				"Core",
+				"Engine",
+
+				"XeSSCommon",
+				"XeSSSDK",
 				"XeSSUnreal",
 			}
 		);
 
-		if (EngineMajorVersion >= 5)
-		{
-			PrivateDependencyModuleNames.Add("RHICore");
-		}
-
-		// Needed for D3D12RHI
-		AddEngineThirdPartyPrivateStaticDependencies(Target, "DX12");
-		AddEngineThirdPartyPrivateStaticDependencies(Target, "NVAPI");
-		AddEngineThirdPartyPrivateStaticDependencies(Target, "NVAftermath");
-		// IntelMetricsDiscovery no longer used since Unreal 5.4
-		if (EngineMajorVersion < 5 || EngineMajorVersion == 5 && EngineMinorVersion < 4)
-		{
-			AddEngineThirdPartyPrivateStaticDependencies(Target, "IntelMetricsDiscovery");
-		}
-		AddEngineThirdPartyPrivateStaticDependencies(Target, "IntelExtensionsFramework");
 	}
 }

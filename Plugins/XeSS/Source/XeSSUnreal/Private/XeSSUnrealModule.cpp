@@ -21,6 +21,7 @@
  ******************************************************************************/
 
 #include "XeSSUnrealModule.h"
+
 #include "Modules/ModuleManager.h"
 
-IMPLEMENT_MODULE(FXeSSUnreal, XeSSUnreal)
+IMPLEMENT_MODULE(FXeSSUnrealModule, XeSSUnreal)

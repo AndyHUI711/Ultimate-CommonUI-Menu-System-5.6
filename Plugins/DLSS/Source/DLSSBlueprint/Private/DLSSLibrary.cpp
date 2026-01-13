@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 - 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+* Copyright (c) 2020 - 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
 * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
 * property and proprietary rights in and to this material, related
@@ -21,8 +21,18 @@
 #include "Interfaces/IPluginManager.h"
 #include "Modules/ModuleManager.h"
 #include "Runtime/Launch/Resources/Version.h"
+#include "Misc/EngineVersionComparison.h"
+
 #include "SceneView.h"
 #include "ShaderCore.h"
+
+
+// For IsRayTracingAllowed
+#if UE_VERSION_OLDER_THAN(5,2,0)
+#include "RenderResource.h"
+#else
+#include "RenderUtils.h"
+#endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(DLSSLibrary)
 
@@ -182,7 +192,8 @@ bool UDLSSLibrary::IsDLSSModeSupported(UDLSSMode DLSSMode)
 		else if (DLSSMode == UDLSSMode::Auto)
 		{
 			// support for auto quality mode was dropped with UE 5.1 (except as a way to ask for optimal screen percentage for a given resolution)
-			return false;
+			// so the app has to do more BP work. Returning auto mode here makes the BP client's work easier 🤞
+			return true;
 		}
 		else
 		{
@@ -308,6 +319,17 @@ TArray<UDLSSMode> UDLSSLibrary::GetSupportedDLSSModes()
 	return SupportedQualityModes;
 }
 
+bool UDLSSLibrary::IsRayTracingAvailable()
+{
+#if UE_VERSION_OLDER_THAN(5,2,0)
+	return IsRayTracingEnabled();
+#else
+	return IsRayTracingAllowed();	
+#endif
+
+
+}
+
 bool UDLSSLibrary::IsDLSSSupported()
 {
 #if WITH_DLSS
@@ -350,6 +372,21 @@ bool UDLSSLibrary::IsDLSSRRSupported()
 #endif
 }
 
+static bool GetIsRHISupportsRR()
+{
+	bool bDoseRHISupportsRR = false;
+#if WITH_DLSS
+	static IDLSSModuleInterface* DLSSModule = FModuleManager::GetModulePtr<IDLSSModuleInterface>(TEXT("DLSS"));
+	if (DLSSModule == nullptr)
+	{
+		return false;
+	}
+
+	bDoseRHISupportsRR = DLSSModule->GetIsRRSupportedByRHI();
+#endif
+	return bDoseRHISupportsRR;
+}
+
 UDLSSSupport UDLSSLibrary::QueryDLSSRRSupport()
 {
 #if WITH_DLSS
@@ -358,6 +395,21 @@ UDLSSSupport UDLSSLibrary::QueryDLSSRRSupport()
 		UE_LOG(LogDLSSBlueprint, Error, TEXT("QueryDLSSRRSupport should not be called before PostEngineInit"));
 		return UDLSSSupport::NotSupported;
 	}
+
+	static bool bIsRRSupportedByRHI = GetIsRHISupportsRR();
+
+	if (!bIsRRSupportedByRHI)
+	{
+		UE_LOG(LogDLSSBlueprint, Warning, TEXT("RR is not supported by current RHI, Please switch to D3D12"));
+		return UDLSSSupport::NotSupported;
+	}
+
+	if(!IsRayTracingEnabled())
+	{
+		UE_LOG(LogDLSSBlueprint, Warning, TEXT("RR is not supported because no need to reconstract rays if there are no rays to reconstruct ¯\'_(ツ)_/¯"));
+		return UDLSSSupport::NotSupported;
+	}
+
 #endif
 	return DLSSRRSupport;
 }
@@ -781,7 +833,7 @@ UDLSSMode UDLSSLibrary::GetDefaultDLSSMode()
 #endif
 	if (UDLSSLibrary::IsDLSSSupported())
 	{
-		return UDLSSMode::Quality;
+		return UDLSSMode::Auto;
 	}
 	else
 	{

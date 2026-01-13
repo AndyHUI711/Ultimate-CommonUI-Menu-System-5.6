@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "5.4",
+	"EngineAssociation": "5.6",
 	"Category": "",
 	"Description": "",
 	"Plugins": [
@@ -10,7 +10,8 @@
 		},
 		{
 			"Name": "XeSS",
-			"Enabled": true
+			"Enabled": true,
+			"MarketplaceURL": "https://www.fab.com/listings/8ab057da-982a-4e3b-8c56-ab56720d4641"
 		},
 		{
 			"Name": "DLSSMoviePipelineSupport",

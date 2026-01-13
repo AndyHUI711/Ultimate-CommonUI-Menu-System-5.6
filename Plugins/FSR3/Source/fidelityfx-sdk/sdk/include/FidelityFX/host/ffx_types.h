@@ -272,7 +272,7 @@ typedef int32_t FfxInt32x4[4];
 /// @ingroup ffxHost
 
 
-/// An enumeration of surface formats.
+/// An enumeration of surface formats. Needs to match enum FfxApiSurfaceFormat
 ///
 /// @ingroup SDKTypes
 typedef enum FfxSurfaceFormat {
@@ -307,6 +307,15 @@ typedef enum FfxSurfaceFormat {
     FFX_SURFACE_FORMAT_R8G8_UINT,                   ///<  8 bit per channel, 2 channel unsigned integer format
     FFX_SURFACE_FORMAT_R32_FLOAT,                   ///< 32 bit per channel, 1 channel float format
     FFX_SURFACE_FORMAT_R9G9B9E5_SHAREDEXP,          ///<  9 bit per channel, 5 bit exponent format
+
+    FFX_SURFACE_FORMAT_R16G16B16A16_TYPELESS,       ///< 16 bit per channel, 4 channel typeless format
+    FFX_SURFACE_FORMAT_R32G32_TYPELESS,             ///< 32 bit per channel, 2 channel typeless format
+    FFX_SURFACE_FORMAT_R10G10B10A2_TYPELESS,        ///< 10 bit per 3 channel, 2 bit for 1 channel typeless format
+    FFX_SURFACE_FORMAT_R16G16_TYPELESS,             ///< 16 bit per channel, 2 channel typeless format
+    FFX_SURFACE_FORMAT_R16_TYPELESS,                ///< 16 bit per channel, 1 channel typeless format
+    FFX_SURFACE_FORMAT_R8_TYPELESS,                 ///<  8 bit per channel, 1 channel typeless format
+    FFX_SURFACE_FORMAT_R8G8_TYPELESS,               ///<  8 bit per channel, 2 channel typeless format
+    FFX_SURFACE_FORMAT_R32_TYPELESS,                ///< 32 bit per channel, 1 channel typeless format
 } FfxSurfaceFormat;
 
 typedef enum FfxIndexFormat
@@ -326,7 +335,8 @@ typedef enum FfxResourceUsage {
     FFX_RESOURCE_USAGE_DEPTHTARGET = (1<<2),            ///< Indicates a resource will be used as depth target.
     FFX_RESOURCE_USAGE_INDIRECT = (1<<3),               ///< Indicates a resource will be used as indirect argument buffer
     FFX_RESOURCE_USAGE_ARRAYVIEW = (1<<4),              ///< Indicates a resource that will generate array views. Works on 2D and cubemap textures
-    FFX_RESOURCE_USAGE_DCC_RENDERTARGET = (1<<5),       ///< Indicates a resource that should specify optimal render target memory access flags (for console use)
+    FFX_RESOURCE_USAGE_STENCILTARGET = (1<<5),          ///< Indicates a resource will be used as stencil target.
+    FFX_RESOURCE_USAGE_DCC_RENDERTARGET = (1<<15),      ///< Indicates a resource that should specify optimal render target memory access flags (for console use)
 } FfxResourceUsage;
 
 /// An enumeration of resource states.
@@ -345,6 +355,7 @@ typedef enum FfxResourceStates {
     FFX_RESOURCE_STATE_INDIRECT_ARGUMENT    = (1 << 6), ///< Indicates a resource is in the state to be used as an indirect command argument
     FFX_RESOURCE_STATE_PRESENT              = (1 << 7), ///< Indicates a resource is in the state to be used to present to the swap chain
     FFX_RESOURCE_STATE_RENDER_TARGET        = (1 << 8), ///< Indicates a resource is in the state to be used as render target
+    FFX_RESOURCE_STATE_DEPTH_ATTACHEMENT    = (1 << 9), ///< Indicates a resource is in the state to be used as depth attachment
 } FfxResourceStates;
 
 /// An enumeration of surface dimensions.
@@ -494,6 +505,8 @@ typedef enum FfxBarrierType
     FFX_BARRIER_TYPE_TRANSITION = 0,
     FFX_BARRIER_TYPE_UAV,
 } FfxBarrierType;
+
+typedef void (*ffxMessageCallback)(uint32_t type, const wchar_t* message);
 
 /// An enumeration for message types that can be passed
 ///
@@ -1268,11 +1281,22 @@ typedef struct FfxFrameGenerationDispatchDescription {
     uint64_t                        frameID;
 } FfxFrameGenerationDispatchDescription;
 
+//struct definition matches FfxApiEffectMemoryUsage
 typedef struct FfxEffectMemoryUsage
 {
     uint64_t totalUsageInBytes;
     uint64_t aliasableUsageInBytes;
 } FfxEffectMemoryUsage;
+
+//struct definition matches FfxApiSwapchainFramePacingTuning
+typedef struct FfxSwapchainFramePacingTuning
+{
+    float    safetyMarginInMs; // in Millisecond
+    float    varianceFactor; // valid range [0.0,1.0]
+    bool     allowHybridSpin; //Allows pacing spinlock to sleep.
+    uint32_t hybridSpinTime;  //How long to spin when hybridSpin is enabled. Measured in timer resolution units. Not recommended to go below 2. Will result in frequent overshoots.
+    bool     allowWaitForSingleObjectOnFence; //Allows to call WaitForSingleObject() instead of spinning for fence value.
+} FfxSwapchainFramePacingTuning;
 
 #ifdef __cplusplus
 }

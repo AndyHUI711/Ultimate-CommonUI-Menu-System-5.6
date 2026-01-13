@@ -84,6 +84,7 @@ struct InternalFsr3UpscalerUContext
     FfxResourceInternal     sharedResources[FFX_FSR3_RESOURCE_IDENTIFIER_COUNT];
     FfxFsr3UpscalerContext  context;
     ffxApiMessage           fpMessage;
+    uint32_t                debugLevel;
 };
 
 ffxReturnCode_t ffxProvider_FSR3Upscale::CreateContext(ffxContext* context, ffxCreateContextDescHeader* header, Allocator& alloc) const
@@ -122,6 +123,8 @@ ffxReturnCode_t ffxProvider_FSR3Upscale::CreateContext(ffxContext* context, ffxC
 
         // Create the FSR3UPSCALER context
         TRY2(ffxFsr3UpscalerContextCreate(&internal_context->context, &initializationParameters));
+        
+        ffxFsr3UpscalerSetGlobalDebugMessage(reinterpret_cast<ffxMessageCallback>(desc->fpMessage), 0);
 
         // set up FSR3Upscaler "shared" resources (no resource sharing in the upscaler provider though, since providers are fully independent and we can't guarantee all upscale providers will be compatible with other effects)
         {
@@ -199,6 +202,15 @@ ffxReturnCode_t ffxProvider_FSR3Upscale::Configure(ffxContext* context, const ff
         TRY2(ffxFsr3UpscalerSetConstant(&internal_context->context, static_cast<FfxFsr3UpscalerConfigureKey>(desc->key), desc->ptr));
         break;
     }
+    case FFX_API_CONFIGURE_DESC_TYPE_GLOBALDEBUG1:
+    {
+        auto desc = reinterpret_cast<const ffxConfigureDescGlobalDebug1*>(header);
+        TRY2(ffxFsr3UpscalerSetGlobalDebugMessage( reinterpret_cast<ffxMessageCallback>(desc->fpMessage),
+        desc->debugLevel));
+        internal_context->fpMessage = desc->fpMessage;
+        internal_context->debugLevel = desc->debugLevel;
+        break;
+    }
     default:
         return FFX_API_RETURN_ERROR_UNKNOWN_DESCTYPE;
     }
@@ -272,6 +284,14 @@ ffxReturnCode_t ffxProvider_FSR3Upscale::Query(ffxContext* context, ffxQueryDesc
         {
             *desc->pOutUpscaleRatio = ratio;
         }
+        break;
+    }
+    case FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE:
+    {
+        InternalFsr3UpscalerUContext* internal_context = reinterpret_cast<InternalFsr3UpscalerUContext*>(*context);
+        auto desc = reinterpret_cast<ffxQueryDescUpscaleGetGPUMemoryUsage*>(header);
+        
+        TRY2(ffxFsr3UpscalerContextGetGpuMemoryUsage(&internal_context->context, reinterpret_cast <FfxEffectMemoryUsage*> (desc->gpuMemoryUsageUpscaler)));
         break;
     }
     default:

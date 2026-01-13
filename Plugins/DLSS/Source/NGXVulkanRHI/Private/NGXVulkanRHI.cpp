@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 - 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+* Copyright (c) 2020 - 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
 * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
 * property and proprietary rights in and to this material, related
@@ -52,6 +52,7 @@ public:
 	FNGXVulkanRHI(const FNGXRHICreateArguments& Arguments);
 	virtual void ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments& InArguments, FDLSSStateRef InDLSSState) final;
 	virtual ~FNGXVulkanRHI();
+	virtual bool IsRRSupportedByRHI() const override { return false; }
 private:
 
 	IVulkanDynamicRHI* VulkanRHI = nullptr;
@@ -108,7 +109,6 @@ FNGXVulkanRHI::FNGXVulkanRHI(const FNGXRHICreateArguments& Arguments)
 	check(VulkanRHI);
 
 	const FString NGXLogDir = GetNGXLogDirectory();
-	IPlatformFile::GetPlatformPhysical().CreateDirectoryTree(*NGXLogDir);
 
 	bIsIncompatibleAPICaptureToolActive = IsIncompatibleAPICaptureToolActive();
 
@@ -201,6 +201,7 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 		
 		ApplyCommonNGXParameterSettings(NewNGXParameterHandle, InArguments);
 
+		static_assert (int(ENGXDLSSDenoiserMode::MaxValue) == 1, "dear DLSS plugin NVIDIA developer, please update this code to handle the new ENGXDLSSDenoiserMode enum values");
 		if (InArguments.DenoiserMode == ENGXDLSSDenoiserMode::DLSSRR)
 		{
 			// DLSS-SR feature creation
@@ -355,8 +356,46 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 
 		NVSDK_NGX_Resource_VK InNormalTexture = NGXVulkanResourceFromRHITexture(InArguments.InputNormals);
 		DlssRREvalParams.pInNormals = &InNormalTexture;
+		DlssRREvalParams.InNormalsSubrectBase.X = 0;
+		DlssRREvalParams.InNormalsSubrectBase.Y = 0;
+		
 		NVSDK_NGX_Resource_VK InRoughnessTexture = NGXVulkanResourceFromRHITexture(InArguments.InputRoughness);
 		DlssRREvalParams.pInRoughness = &InRoughnessTexture;
+		DlssRREvalParams.InRoughnessSubrectBase.X = 0;
+		DlssRREvalParams.InRoughnessSubrectBase.Y = 0;
+
+
+#if SUPPORT_GUIDE_GBUFFER
+		if (InArguments.InputReflectionHitDistance)
+		{
+			NVSDK_NGX_Resource_VK InReflectionDistanceTexture = NGXVulkanResourceFromRHITexture(InArguments.InputReflectionHitDistance);
+			DlssRREvalParams.pInSpecularHitDistance = &InReflectionDistanceTexture;
+			DlssRREvalParams.InSpecularHitDistanceSubrectBase.X = 0;
+			DlssRREvalParams.InSpecularHitDistanceSubrectBase.Y = 0;
+
+			// Yes, the interface takes a non-const ptr as an argument
+			DlssRREvalParams.pInWorldToViewMatrix = const_cast<float*>(InArguments.ViewMatrix);
+			DlssRREvalParams.pInViewToClipMatrix = const_cast<float*>(InArguments.ProjectionMatrix);
+		}
+#endif
+
+#if SUPPORT_GUIDE_SSS_DOF
+		if (InArguments.InputSSS)
+		{
+			NVSDK_NGX_Resource_VK InScreenSpaceSubsurfaceScatteringGuideTexture = NGXVulkanResourceFromRHITexture(InArguments.InputSSS);
+			DlssRREvalParams.pInScreenSpaceSubsurfaceScatteringGuide = &InScreenSpaceSubsurfaceScatteringGuideTexture;
+			DlssRREvalParams.InScreenSpaceSubsurfaceScatteringGuideSubrectBase.X = 0;
+			DlssRREvalParams.InScreenSpaceSubsurfaceScatteringGuideSubrectBase.Y = 0;
+		}
+
+		if (InArguments.InputDOF)
+		{
+			NVSDK_NGX_Resource_VK InDepthOfFieldGuide = NGXVulkanResourceFromRHITexture(InArguments.InputDOF);
+			DlssRREvalParams.pInDepthOfFieldGuide = &InDepthOfFieldGuide;
+			DlssRREvalParams.InDepthOfFieldGuideSubrectBase.X = 0;
+			DlssRREvalParams.InDepthOfFieldGuideSubrectBase.Y = 0;
+		}
+#endif
 
 		NVSDK_NGX_Result ResultEvaluate = NGX_VULKAN_EVALUATE_DLSSD_EXT(
 			VulkanCommandBuffer,
@@ -396,6 +435,17 @@ void FNGXVulkanRHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArgument
 		// The VelocityCombine pass puts the motion vectors into the top left corner
 		DlssEvalParams.InMVSubrectBase.X = 0;
 		DlssEvalParams.InMVSubrectBase.Y = 0;
+
+		
+		NVSDK_NGX_Resource_VK InBiasCurrentColorMask;
+		
+		if (InArguments.bUseBiasCurrentColorMask)
+		{
+			InBiasCurrentColorMask = NGXVulkanResourceFromRHITexture(InArguments.InputBiasCurrentColorMask);
+		}
+		DlssEvalParams.pInBiasCurrentColorMask = InArguments.bUseBiasCurrentColorMask ? &InBiasCurrentColorMask : nullptr;
+		DlssEvalParams.InBiasCurrentColorSubrectBase.X = InArguments.SrcRect.Min.X;
+		DlssEvalParams.InBiasCurrentColorSubrectBase.Y = InArguments.DestRect.Min.Y;
 
 		NVSDK_NGX_Resource_VK InExposureTexture = NGXVulkanResourceFromRHITexture(InArguments.InputExposure);
 		DlssEvalParams.pInExposureTexture = InArguments.bUseAutoExposure ? nullptr : &InExposureTexture;

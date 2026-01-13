@@ -1,6 +1,6 @@
 // This file is part of the FidelityFX Super Resolution 3.1 Unreal Engine Plugin.
 //
-// Copyright (c) 2023-2024 Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2023-2025 Advanced Micro Devices, Inc. All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -57,6 +57,12 @@ struct FFISlateReleaseDrawBufferCommand final : public FRHICommand < FFISlateRel
 	}
 };
 
+FDelegateHandle OnSlateWindowRenderedHandle;
+FDelegateHandle OnSlateWindowDestroyedHandle;
+FDelegateHandle OnPreResizeWindowBackBufferHandle;
+FDelegateHandle OnPostResizeWindowBackBufferHandle;
+FDelegateHandle OnBackBufferReadyToPresentHandle;
+
 //------------------------------------------------------------------------------------------------------
 // Implementation for the SlateRenderer override that allows for more draw buffers.
 //------------------------------------------------------------------------------------------------------
@@ -66,15 +72,40 @@ FFXFrameInterpolationSlateRenderer::FFXFrameInterpolationSlateRenderer(TSharedRe
 , FreeBufferIndex(0)
 , ResourceVersion(0)
 {
-    InUnderlyingRenderer->OnSlateWindowRendered().AddRaw(this, &FFXFrameInterpolationSlateRenderer::OnSlateWindowRenderedThunk);
-    InUnderlyingRenderer->OnSlateWindowDestroyed().AddRaw(this, &FFXFrameInterpolationSlateRenderer::OnSlateWindowDestroyedThunk);
-    InUnderlyingRenderer->OnPreResizeWindowBackBuffer().AddRaw(this, &FFXFrameInterpolationSlateRenderer::OnPreResizeWindowBackBufferThunk);
-    InUnderlyingRenderer->OnPostResizeWindowBackBuffer().AddRaw(this, &FFXFrameInterpolationSlateRenderer::OnPostResizeWindowBackBufferThunk);
-    InUnderlyingRenderer->OnBackBufferReadyToPresent().AddRaw(this, &FFXFrameInterpolationSlateRenderer::OnBackBufferReadyToPresentThunk);
+	SlateWindowRendered = MoveTemp(InUnderlyingRenderer->OnSlateWindowRendered());
+	OnSlateWindowDestroyedDelegate = MoveTemp(InUnderlyingRenderer->OnSlateWindowDestroyed());
+	PreResizeBackBufferDelegate = MoveTemp(InUnderlyingRenderer->OnPreResizeWindowBackBuffer());
+	PostResizeBackBufferDelegate = MoveTemp(InUnderlyingRenderer->OnPostResizeWindowBackBuffer());
+	OnBackBufferReadyToPresentDelegate = MoveTemp(InUnderlyingRenderer->OnBackBufferReadyToPresent());
+	
+	InUnderlyingRenderer->OnSlateWindowRendered().Clear();
+	InUnderlyingRenderer->OnSlateWindowDestroyed().Clear();
+	InUnderlyingRenderer->OnPreResizeWindowBackBuffer().Clear();
+	InUnderlyingRenderer->OnPostResizeWindowBackBuffer().Clear();
+	InUnderlyingRenderer->OnBackBufferReadyToPresent().Clear();
+	
+	OnSlateWindowRenderedHandle = InUnderlyingRenderer->OnSlateWindowRendered().AddRaw(this, &FFXFrameInterpolationSlateRenderer::OnSlateWindowRenderedThunk);
+	OnSlateWindowDestroyedHandle = InUnderlyingRenderer->OnSlateWindowDestroyed().AddRaw(this, &FFXFrameInterpolationSlateRenderer::OnSlateWindowDestroyedThunk);
+	OnPreResizeWindowBackBufferHandle = InUnderlyingRenderer->OnPreResizeWindowBackBuffer().AddRaw(this, &FFXFrameInterpolationSlateRenderer::OnPreResizeWindowBackBufferThunk);
+	OnPostResizeWindowBackBufferHandle = InUnderlyingRenderer->OnPostResizeWindowBackBuffer().AddRaw(this, &FFXFrameInterpolationSlateRenderer::OnPostResizeWindowBackBufferThunk);
+	OnBackBufferReadyToPresentHandle = InUnderlyingRenderer->OnBackBufferReadyToPresent().AddRaw(this, &FFXFrameInterpolationSlateRenderer::OnBackBufferReadyToPresentThunk);
+	
+	FSlateApplication::Get().OnPreShutdown().AddLambda([InUnderlyingRenderer]()
+	{
+		InUnderlyingRenderer->OnSlateWindowRendered().Remove(OnSlateWindowRenderedHandle);
+		InUnderlyingRenderer->OnSlateWindowDestroyed().Remove(OnSlateWindowDestroyedHandle);
+		InUnderlyingRenderer->OnPreResizeWindowBackBuffer().Remove(OnPreResizeWindowBackBufferHandle);
+		InUnderlyingRenderer->OnPostResizeWindowBackBuffer().Remove(OnPostResizeWindowBackBufferHandle);
+		InUnderlyingRenderer->OnBackBufferReadyToPresent().Remove(OnBackBufferReadyToPresentHandle);
+	});
 }
 FFXFrameInterpolationSlateRenderer::~FFXFrameInterpolationSlateRenderer()
 {
-
+	UnderlyingRenderer->OnSlateWindowRendered().Remove(OnSlateWindowRenderedHandle);
+	UnderlyingRenderer->OnSlateWindowDestroyed().Remove(OnSlateWindowDestroyedHandle);
+	UnderlyingRenderer->OnPreResizeWindowBackBuffer().Remove(OnPreResizeWindowBackBufferHandle);
+	UnderlyingRenderer->OnPostResizeWindowBackBuffer().Remove(OnPostResizeWindowBackBufferHandle);
+	UnderlyingRenderer->OnBackBufferReadyToPresent().Remove(OnBackBufferReadyToPresentHandle);
 }
 
 #if UE_VERSION_AT_LEAST(5, 1, 0)
@@ -228,6 +259,7 @@ bool FFXFrameInterpolationSlateRenderer::GenerateDynamicImageResource(FName Reso
     return UnderlyingRenderer->GenerateDynamicImageResource(ResourceName, TextureData);
 }
 
+#if UE_VERSION_AT_LEAST(5, 0, 0)
 #if UE_VERSION_AT_LEAST(5, 1, 0)
 FSlateResourceHandle FFXFrameInterpolationSlateRenderer::GetResourceHandle(const FSlateBrush& Brush, FVector2f LocalSize, float DrawScale)
 #else
@@ -236,6 +268,7 @@ FSlateResourceHandle FFXFrameInterpolationSlateRenderer::GetResourceHandle(const
 {
     return UnderlyingRenderer->GetResourceHandle(Brush, LocalSize, DrawScale);
 }
+#endif
 
 FSlateResourceHandle FFXFrameInterpolationSlateRenderer::GetResourceHandle(const FSlateBrush& Brush)
 {
@@ -331,20 +364,24 @@ void FFXFrameInterpolationSlateRenderer::PrepareToTakeScreenshot(const FIntRect&
     return UnderlyingRenderer->PrepareToTakeScreenshot(Rect, OutColorData, InScreenshotWindow);
 }
 
+#if UE_VERSION_OLDER_THAN(5, 5, 0)
 void FFXFrameInterpolationSlateRenderer::SetWindowRenderTarget(const SWindow& Window, class IViewportRenderTargetProvider* Provider)
 {
     return UnderlyingRenderer->SetWindowRenderTarget(Window, Provider);
 }
+#endif
 
 FSlateUpdatableTexture* FFXFrameInterpolationSlateRenderer::CreateUpdatableTexture(uint32 Width, uint32 Height)
 {
     return UnderlyingRenderer->CreateUpdatableTexture(Width, Height);
 }
 
+#if UE_VERSION_AT_LEAST(5, 0, 0)
 FSlateUpdatableTexture* FFXFrameInterpolationSlateRenderer::CreateSharedHandleTexture(void* SharedHandle)
 {
     return UnderlyingRenderer->CreateSharedHandleTexture(SharedHandle);
 }
+#endif
 
 void FFXFrameInterpolationSlateRenderer::ReleaseUpdatableTexture(FSlateUpdatableTexture* Texture)
 {
@@ -418,3 +455,10 @@ EPixelFormat FFXFrameInterpolationSlateRenderer::GetSlateRecommendedColorFormat(
 {
     return UnderlyingRenderer->GetSlateRecommendedColorFormat();
 }
+
+#if UE_VERSION_AT_LEAST(5, 5, 0)
+void FFXFrameInterpolationSlateRenderer::SetCurrentSceneIndex(int32 index)
+{
+	return UnderlyingRenderer->SetCurrentSceneIndex(index);
+}
+#endif

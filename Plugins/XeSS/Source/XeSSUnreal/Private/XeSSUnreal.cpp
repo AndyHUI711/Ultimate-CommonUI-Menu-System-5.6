@@ -20,21 +20,40 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#pragma once
-
 #include "XeSSCommonMacros.h"
 
 #if XESS_ENGINE_VERSION_GEQ(5, 1)
 #include "Misc/ConfigUtilities.h"
+#include "IVulkanDynamicRHI.h"
 #else
 #include "Misc/ConfigCacheIni.h"
+#include "VulkanRHIBridge.h"
 #endif
 
+#if ENGINE_MAJOR_VERSION >= 5
+#include "SceneTextures.h"
+#else
+#include "PostProcess/SceneRenderTargets.h"
+#endif
+
+#if XESS_ENGINE_VERSION_GEQ(5, 3)
+#include "PostProcess/PostProcessMaterialInputs.h"
+#else
+#include "PostProcess/PostProcessMaterial.h"
+#endif
 #include "RenderGraphResources.h"
+#include "RenderGraphUtils.h"
+#include "RHICommandList.h"
+#include "SceneRendering.h"
+#include "ScreenPass.h"
+#include "SystemTextures.h"
+#include "UnrealClient.h"
+#include "VulkanRHIPrivate.h"
 #include "XeSSUnrealCore.h"
-#include "XeSSUnrealD3D12RHI.h"
-#include "XeSSUnrealD3D12RHIIncludes.h"
+#include "XeSSUnrealEngine.h"
+#include "XeSSUnrealRenderer.h"
 #include "XeSSUnrealRHI.h"
+#include "XeSSUnrealVulkanRHI.h"
 
 namespace XeSSUnreal
 {
@@ -45,52 +64,6 @@ void ApplyCVarSettingsFromIni(const TCHAR* InSectionBaseName, const TCHAR* InIni
 	UE::ConfigUtilities::ApplyCVarSettingsFromIni(InSectionBaseName, InIniFilename, SetBy, bAllowCheating);
 #else
 	::ApplyCVarSettingsFromIni(InSectionBaseName, InIniFilename, SetBy, bAllowCheating);
-#endif
-}
-
-ID3D12Device* GetDevice(XD3D12DynamicRHI* D3D12DynamicRHI)
-{
-#if XESS_ENGINE_VERSION_GEQ(5, 1)
-	// No SLI/Crossfire support required, only 1 GPU node
-	return D3D12DynamicRHI->RHIGetDevice(0);
-#else
-	return D3D12DynamicRHI->GetAdapter().GetD3DDevice();
-#endif
-}
-
-ID3D12Resource* GetResource(XD3D12DynamicRHI* D3D12DynamicRHI, FRHITexture* Texture)
-{
-#if XESS_ENGINE_VERSION_GEQ(5, 1)
-	return D3D12DynamicRHI->RHIGetResource(Texture);
-#else
-	(void)D3D12DynamicRHI;
-	return GetD3D12TextureFromRHITexture(Texture)->GetResource()->GetResource();
-#endif
-}
-
-ID3D12GraphicsCommandList* RHIGetGraphicsCommandList(XD3D12DynamicRHI* D3D12DynamicRHI)
-{
-	// No SLI/Crossfire support required, only 1 GPU node
-	int DeviceIndex = 0;
-#if XESS_ENGINE_VERSION_GEQ(5, 1)
-	return D3D12DynamicRHI->RHIGetGraphicsCommandList(DeviceIndex);
-#else
-	return D3D12DynamicRHI->GetAdapter().GetDevice(DeviceIndex)->GetCommandContext().CommandListHandle.GraphicsCommandList();
-#endif
-}
-void RHIFinishExternalComputeWork(XD3D12DynamicRHI* D3D12DynamicRHI, ID3D12GraphicsCommandList* CommandList)
-{
-	// No SLI/Crossfire support required, only 1 GPU node
-	int DeviceIndex = 0;
-#if XESS_ENGINE_VERSION_GEQ(5, 1)
-	D3D12DynamicRHI->RHIFinishExternalComputeWork(DeviceIndex, CommandList);
-#else
-	(void)D3D12DynamicRHI;
-	(void)CommandList;
-	FD3D12CommandContext& CommandContext = D3D12DynamicRHI->GetAdapter().GetDevice(DeviceIndex)->GetCommandContext();
-	FD3D12StateCache& StateCache = CommandContext.StateCache;
-	StateCache.ForceSetComputeRootSignature();
-	StateCache.GetDescriptorCache()->SetCurrentCommandList(CommandContext.CommandListHandle);
 #endif
 }
 
@@ -118,6 +91,83 @@ void UnlockRHIBuffer(FRHICommandListImmediate& CommandList, XRHIBuffer* Buffer)
 	CommandList.UnlockBuffer(Buffer);
 #else
 	CommandList.UnlockStructuredBuffer(Buffer);
+#endif
+}
+
+const XSceneTextures& GetSceneTextures(const FViewInfo& ViewInfo, FRDGBuilder& GraphBuilder)
+{
+#if XESS_ENGINE_VERSION_GEQ(5, 1)
+	(void)GraphBuilder;
+	return ViewInfo.GetSceneTextures();
+#elif XESS_ENGINE_VERSION_GEQ(5, 0)
+	(void)ViewInfo;
+	return FSceneTextures::Get(GraphBuilder);
+#else
+	return FSceneRenderTargets::Get(GraphBuilder.RHICmdList);
+#endif
+}
+
+FRDGTexture* GetSceneDepthTexture(const XSceneTextures& SceneTextures, FRDGBuilder& GraphBuilder)
+{
+#if ENGINE_MAJOR_VERSION >= 5
+	(void)GraphBuilder;
+	return SceneTextures.Depth.Resolve;
+#else
+	return GraphBuilder.RegisterExternalTexture(SceneTextures.SceneDepthZ);
+#endif
+}
+
+FRDGTexture* GetSceneVelocityTexture(const XSceneTextures& SceneTextures, FRDGBuilder& GraphBuilder)
+{
+#if ENGINE_MAJOR_VERSION >= 5
+	return SceneTextures.Velocity;
+#else
+	auto SceneVelocity = SceneTextures.SceneVelocity;
+	if (!SceneVelocity.IsValid())
+	{
+		SceneVelocity = GSystemTextures.BlackDummy;
+	}
+	return GraphBuilder.RegisterExternalTexture(SceneVelocity, TEXT("SceneVelocity"));
+#endif
+}
+
+FScreenPassTexture ReturnUntouchedSceneColorForPostProcessing(const FPostProcessMaterialInputs& Inputs, FRDGBuilder& GraphBuilder)
+{
+#if XESS_ENGINE_VERSION_GEQ(5, 4)
+	return Inputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
+#else
+	if (Inputs.OverrideOutput.IsValid())
+	{
+		return Inputs.OverrideOutput;
+	}
+	else
+	{
+		return FScreenPassTexture(Inputs.GetInput(EPostProcessMaterialInput::SceneColor));
+	}
+#endif
+}
+
+FScreenPassTexture GetInputScreenPassTexture(const FPostProcessMaterialInputs& Inputs, EPostProcessMaterialInput Input, FRDGBuilder& GraphBuilder)
+{
+#if XESS_ENGINE_VERSION_GEQ(5, 4)
+	return FScreenPassTexture::CopyFromSlice(GraphBuilder, Inputs.GetInput(Input));
+#else
+	(void)GraphBuilder;
+	return Inputs.GetInput(Input);
+#endif
+}
+
+FRDGTexture* GetRenderTargetTexture(const FRenderTarget& RenderTarget, FRDGBuilder& GraphBuilder)
+{
+#if ENGINE_MAJOR_VERSION >= 5
+	return RenderTarget.GetRenderTargetTexture(GraphBuilder);
+#else
+	FRHITexture* Texture = RenderTarget.GetRenderTargetTexture();
+	if (FRDGTexture* FoundTexture = GraphBuilder.FindExternalTexture(Texture))
+	{
+		return FoundTexture;
+	}
+	return GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Texture, TEXT("RenderTarget")));
 #endif
 }
 

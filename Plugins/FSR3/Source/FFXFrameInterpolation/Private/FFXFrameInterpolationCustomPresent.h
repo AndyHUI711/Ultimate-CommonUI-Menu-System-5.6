@@ -1,6 +1,6 @@
 // This file is part of the FidelityFX Super Resolution 3.1 Unreal Engine Plugin.
 //
-// Copyright (c) 2023-2024 Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2023-2025 Advanced Micro Devices, Inc. All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -68,6 +68,7 @@ struct FFXFrameInterpolationResources : public FRHIResource
 	TRefCountPtr<IPooledRenderTarget> Hud;
 	TRefCountPtr<IPooledRenderTarget> Inter;
 	TRefCountPtr<IPooledRenderTarget> MotionVectorRT;
+	FTextureRHIRef Distortion;
 	IFFXSharedBackend* Backend;
 	bool bDebugView;
 };
@@ -91,7 +92,7 @@ class FFXFrameInterpolationCustomPresent : public IFFXFrameInterpolationCustomPr
 	IFFXSharedBackend* Backend;
 	FViewport* Viewport;
 	FRHIViewport* RHIViewport;
-	FTexture2DRHIRef BackBuffer;
+	FTextureRHIRef BackBuffer;
 	FFXFIResourceRef CurrentResource;
 	TArray<FFXFIResourceRef> Resources;
 	TArray<FFXFIResourceRef> OldResources;
@@ -104,6 +105,8 @@ class FFXFrameInterpolationCustomPresent : public IFFXFrameInterpolationCustomPr
 	bool bEnabled;
 	bool bResized;
 	bool bUseFFXSwapchain;
+	bool bHasInterpolatedRT;
+	bool bHasInterpolatedRHI;
 public:
 	FFXFrameInterpolationCustomPresent();
 	virtual ~FFXFrameInterpolationCustomPresent();
@@ -157,7 +160,7 @@ public:
 	// Called when rendering thread is released
 	void OnReleaseThreadOwnership() override final;
 
-	void CopyBackBufferRT(FTexture2DRHIRef InBackBuffer);
+	void CopyBackBufferRT(FTextureRHIRef InBackBuffer);
 	void SetEnabled(bool const bEnabled);
 	void SetMode(EFFXFrameInterpolationPresentMode Mode) override final;
 	void SetCustomPresentStatus(FFXFrameInterpolationCustomPresentStatus Flag);

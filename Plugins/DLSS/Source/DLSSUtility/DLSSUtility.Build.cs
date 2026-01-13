@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 - 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+* Copyright (c) 2020 - 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
 * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
 * property and proprietary rights in and to this material, related
@@ -26,7 +26,10 @@ public class DLSSUtility : ModuleRules
 		PrivateIncludePaths.AddRange(
 			new string[] {
 				Path.Combine(GetModuleDirectory("Renderer"), "Private"),
-			}
+#if UE_5_6_OR_LATER
+                Path.Combine(GetModuleDirectory("Renderer"), "Internal"),
+#endif
+            }
 			);
 		
 		PublicDependencyModuleNames.AddRange(

@@ -1,6 +1,6 @@
 // This file is part of the FidelityFX Super Resolution 3.1 Unreal Engine Plugin.
 //
-// Copyright (c) 2023-2024 Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2023-2025 Advanced Micro Devices, Inc. All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -18,8 +18,6 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-
-#pragma once
 
 #include "FFXRHIBackendOpticalFlowShaders.h"
 #include "FFXRHIBackendSubPass.h"
@@ -77,16 +75,11 @@ IFFXRHIBackendSubPass* GetOpticalFlowPass(FfxPass pass, uint32_t permutationOpti
 	return SubPass;
 }
 
-FFXRHIBackendRegisterEffect<FFX_EFFECT_OPTICALFLOW, GetOpticalFlowPass> FFXRHIBackendRegisterEffect<FFX_EFFECT_OPTICALFLOW, GetOpticalFlowPass>::sSelf;
+template<> FFXRHIBackendRegisterEffect<FFX_EFFECT_OPTICALFLOW, GetOpticalFlowPass> FFXRHIBackendRegisterEffect<FFX_EFFECT_OPTICALFLOW, GetOpticalFlowPass>::sSelf = FFXRHIBackendRegisterEffect<FFX_EFFECT_OPTICALFLOW, GetOpticalFlowPass>();
 
 bool FFXOpticalFlowGlobalShader::ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 {
-#if UE_VERSION_AT_LEAST(5, 1, 0)
-	bool const bWaveOps = FDataDrivenShaderPlatformInfo::GetSupportsWaveOperations(Parameters.Platform) == ERHIFeatureSupport::RuntimeGuaranteed;
-#else
-	bool const bWaveOps = RHISupportsWaveOperations(Parameters.Platform);
-#endif
-	return bWaveOps && FFXGlobalShader::ShouldCompilePermutation(Parameters);
+	return FFXGlobalShader::ShouldCompilePermutation(Parameters);
 }
 
 void FFXOpticalFlowGlobalShader::ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)

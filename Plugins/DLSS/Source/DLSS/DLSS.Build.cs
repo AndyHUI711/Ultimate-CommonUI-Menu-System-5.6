@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 - 2024 NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2020 - 2025 NVIDIA CORPORATION.  All rights reserved.
 *
 * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
 * property and proprietary rights in and to this material, related
@@ -47,6 +47,9 @@ public class DLSS : ModuleRules
 		PrivateIncludePaths.AddRange(
 			new string[] {
 				Path.Combine(GetModuleDirectory("Renderer"), "Private"),
+#if UE_5_6_OR_LATER
+				Path.Combine(GetModuleDirectory("Renderer"), "Internal"),
+#endif
 				// ... add other private include paths required here ...
 			}
 			);
@@ -54,12 +57,10 @@ public class DLSS : ModuleRules
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
-				
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
-			
-		
+
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
@@ -78,6 +79,13 @@ public class DLSS : ModuleRules
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);
+
+#if UE_5_6_OR_LATER
+		PrivateDefinitions.Add("ENGINE_SUPPORTS_UPSCALER_MODULAR_FEATURE=1");
+		PublicDependencyModuleNames.Add("VirtualProduction");
+#else
+		PrivateDefinitions.Add("ENGINE_SUPPORTS_UPSCALER_MODULAR_FEATURE=0");
+#endif
 
 		DynamicallyLoadedModuleNames.AddRange(SupportedDynamicallyLoadedNGXRHIModules(Target));
 	}

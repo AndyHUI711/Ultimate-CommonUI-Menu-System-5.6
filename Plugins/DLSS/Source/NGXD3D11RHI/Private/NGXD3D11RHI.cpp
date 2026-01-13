@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 - 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+* Copyright (c) 2020 - 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
 * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
 * property and proprietary rights in and to this material, related
@@ -51,6 +51,7 @@ public:
 	
 	virtual void ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments& InArguments, FDLSSStateRef InDLSSState) final;
 	virtual ~FNGXD3D11RHI();
+	virtual bool IsRRSupportedByRHI() const override { return false; }
 private:
 
 	ID3D11DynamicRHI* D3D11RHI = nullptr;
@@ -124,8 +125,7 @@ FNGXD3D11RHI::FNGXD3D11RHI(const FNGXRHICreateArguments& Arguments)
 	bIsIncompatibleAPICaptureToolActive = IsIncompatibleAPICaptureToolActive(Direct3DDevice);
 	
 	const FString NGXLogDir = GetNGXLogDirectory();
-	IPlatformFile::GetPlatformPhysical().CreateDirectoryTree(*NGXLogDir);
-
+	
 	NVSDK_NGX_Result ResultInit = Init_NGX_D3D11(Arguments, *NGXLogDir, Direct3DDevice, CommonFeatureInfo());
 	UE_LOG(LogDLSSNGXD3D11RHI, Log, TEXT("NVSDK_NGX_D3D11_Init (Log %s) -> (%u %s)"), *NGXLogDir, ResultInit, GetNGXResultAsString(ResultInit));
 	
@@ -204,6 +204,10 @@ static T GetCommonEvalParams(ID3D11DynamicRHI* D3D11RHI, const FRHIDLSSArguments
 	EvalParams.InMVSubrectBase.X = 0;
 	EvalParams.InMVSubrectBase.Y = 0;
 
+	EvalParams.pInBiasCurrentColorMask = InArguments.bUseBiasCurrentColorMask ? D3D11RHI->RHIGetResource(InArguments.InputBiasCurrentColorMask) : nullptr;
+	EvalParams.InBiasCurrentColorSubrectBase.X = InArguments.SrcRect.Min.X;
+	EvalParams.InBiasCurrentColorSubrectBase.Y = InArguments.SrcRect.Min.Y;
+
 	EvalParams.pInExposureTexture = InArguments.bUseAutoExposure ? nullptr : D3D11RHI->RHIGetResource(InArguments.InputExposure);
 	EvalParams.InPreExposure = InArguments.PreExposure;
 
@@ -247,7 +251,8 @@ void FNGXD3D11RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 		checkf(NVSDK_NGX_SUCCEED(Result), TEXT("NVSDK_NGX_D3D11_AllocateParameters failed! (%u %s)"), Result, GetNGXResultAsString(Result));
 
 		ApplyCommonNGXParameterSettings(NewNGXParameterHandle, InArguments);
-
+		
+		static_assert (int(ENGXDLSSDenoiserMode::MaxValue) == 1, "dear DLSS plugin NVIDIA developer, please update this code to handle the new ENGXDLSSDenoiserMode enum values");
 		if (InArguments.DenoiserMode == ENGXDLSSDenoiserMode::DLSSRR)
 		{
 			// DLSS-RR feature creation
@@ -316,7 +321,43 @@ void FNGXD3D11RHI::ExecuteDLSS(FRHICommandList& CmdList, const FRHIDLSSArguments
 		DlssRREvalParams.InSpecularAlbedoSubrectBase.Y = 0;
 
 		DlssRREvalParams.pInNormals = D3D11RHI->RHIGetResource(InArguments.InputNormals);
+		DlssRREvalParams.InNormalsSubrectBase.X = 0;
+		DlssRREvalParams.InNormalsSubrectBase.Y = 0;
+
 		DlssRREvalParams.pInRoughness = D3D11RHI->RHIGetResource(InArguments.InputRoughness);
+		DlssRREvalParams.InRoughnessSubrectBase.X = 0;
+		DlssRREvalParams.InRoughnessSubrectBase.Y = 0;
+
+#if SUPPORT_GUIDE_GBUFFER
+		if (InArguments.InputReflectionHitDistance)
+		{
+			DlssRREvalParams.pInSpecularHitDistance = D3D11RHI->RHIGetResource(InArguments.InputReflectionHitDistance);
+			DlssRREvalParams.InSpecularHitDistanceSubrectBase.X = 0;
+			DlssRREvalParams.InSpecularHitDistanceSubrectBase.Y = 0;
+
+			// Yes, the interface takes a non-const ptr as an argument
+			DlssRREvalParams.pInWorldToViewMatrix = const_cast<float*>(InArguments.ViewMatrix);
+			DlssRREvalParams.pInViewToClipMatrix = const_cast<float*>(InArguments.ProjectionMatrix);
+		}
+#endif
+
+#if SUPPORT_GUIDE_SSS_DOF
+		if (InArguments.InputSSS)
+		{
+			DlssRREvalParams.pInScreenSpaceSubsurfaceScatteringGuide = D3D11RHI->RHIGetResource(InArguments.InputSSS);
+			DlssRREvalParams.InScreenSpaceSubsurfaceScatteringGuideSubrectBase.X = 0;
+			DlssRREvalParams.InScreenSpaceSubsurfaceScatteringGuideSubrectBase.Y = 0;
+		}
+
+		if (InArguments.InputDOF)
+		{
+			DlssRREvalParams.pInDepthOfFieldGuide = D3D11RHI->RHIGetResource(InArguments.InputDOF);
+			DlssRREvalParams.InDepthOfFieldGuideSubrectBase.X = 0;
+			DlssRREvalParams.InDepthOfFieldGuideSubrectBase.Y = 0;
+		}
+#endif
+
+
 
 		NVSDK_NGX_Result ResultEvaluate = NGX_D3D11_EVALUATE_DLSSD_EXT(
 			Direct3DDeviceIMContext,

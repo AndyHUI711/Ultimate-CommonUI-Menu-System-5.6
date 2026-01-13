@@ -30,8 +30,7 @@
 #define LOCTEXT_NAMESPACE "XeSS"
 
 UXeSSSettings::UXeSSSettings()
-	: bEnableXeSSInEditorViewports(true),
-	DebugDataDumpPath(".")
+	: bEnableXeSSInEditorViewports(true)
 {}
 
 void UXeSSSettings::PostInitProperties()
@@ -51,7 +50,7 @@ void UXeSSSettings::PostInitProperties()
 
 FName UXeSSSettings::GetContainerName() const
 {
-	return FName("Project"); 
+	return FName("Project");
 }
 FName UXeSSSettings::GetCategoryName() const
 {

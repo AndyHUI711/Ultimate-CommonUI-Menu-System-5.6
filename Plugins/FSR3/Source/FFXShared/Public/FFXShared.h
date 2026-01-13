@@ -1,6 +1,6 @@
 // This file is part of the FidelityFX Super Resolution 3.1 Unreal Engine Plugin.
 //
-// Copyright (c) 2023-2024 Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2023-2025 Advanced Micro Devices, Inc. All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -61,3 +61,56 @@
 #else
 	#undef FFX_GCC
 #endif
+
+#if defined(FFX_RENDER_TESTS)
+	#include "IFFXRenderTest.h"
+#else
+	#ifndef FFX_RENDER_TEST_CAPTURE_PASS_BEGIN
+		#define FFX_RENDER_TEST_CAPTURE_PASS_BEGIN(Name, GraphBuilder, MinDiff)  
+	#endif
+	#ifndef FFX_RENDER_TEST_CAPTURE_PASS_ADD
+		#define FFX_RENDER_TEST_CAPTURE_PASS_ADD(TextureName, GraphBuilder, MinDiff) 
+	#endif
+	#ifndef FFX_RENDER_TEST_CAPTURE_PASS_PARAM
+		#define FFX_RENDER_TEST_CAPTURE_PASS_PARAM(TextureName, Texture, GraphBuilder, MinDiff) 
+	#endif
+	#ifndef FFX_RENDER_TEST_CAPTURE_PASS_PARAMS
+		#define FFX_RENDER_TEST_CAPTURE_PASS_PARAMS(TypeName, Parameters, GraphBuilder, MinDiff) 
+	#endif
+	#ifndef FFX_RENDER_TEST_CAPTURE_PASS_END
+		#define FFX_RENDER_TEST_CAPTURE_PASS_END(GraphBuilder) 
+	#endif
+	#ifndef FFX_RENDER_TEST_CAPTURE_PASS_BEGIN_DX12
+		#define FFX_RENDER_TEST_CAPTURE_PASS_BEGIN_DX12(Name)	
+	#endif
+	#ifndef FFX_RENDER_TEST_CAPTURE_PASS_ADD_DX12
+		#define FFX_RENDER_TEST_CAPTURE_PASS_ADD_DX12(Dev, List, Tex, State, Frames, Name)	
+	#endif
+	#ifndef FFX_RENDER_TEST_CAPTURE_PASS_END_DX12
+		#define FFX_RENDER_TEST_CAPTURE_PASS_END_DX12	
+	#endif
+#endif
+
+// -----------------------------------------------------------------------------------------------------------------------------------------------
+// These macros are used to create copies of UE5 objects that we can control via copy-paste from UE5 source, without modifying the UE5 source 
+//  after copying it.  Due to the single-pass nature of the C++ preprocessor, we can't automate this entire process with macros.  The expected
+//  usage paradigm looks something like this:
+// 
+//  1) Make all private members and methods inheritable by overriding the "private" keyword using a #define
+//  2) Overwrite the name of the class by overriding that name with your own custom name using a #define
+//  3) #include FFX_BUILD_VERSIONED_INCLUDE_PATH(<Name-of-Object>)
+//  4) Clear the strings you overrode
+// 
+// A concrete example:
+//  #define private protected
+//  #define FSlateApplication FFXFISlateApplicationAccessor
+//  #include FFX_BUILD_VERSIONED_INCLUDE_PATH(SlateApplication)
+//  #undef FSlateApplication
+//  #undef private
+// -----------------------------------------------------------------------------------------------------------------------------------------------
+#pragma warning(disable : 5103)
+#define FFX_BUILD_INCLUDE_PATH_INNER(name, major, minor, patch) F##name##Versions/F##name##_##major##_##minor##_##patch##.h
+#define FFX_BUILD_INCLUDE_PATH(name, major, minor, patch) FFX_BUILD_INCLUDE_PATH_INNER(name, major, minor, patch)
+#define FFX_STRINGIFY_INNER(x) #x
+#define FFX_STRINGIFY(x) FFX_STRINGIFY_INNER(x)
+#define FFX_BUILD_VERSIONED_INCLUDE_PATH(name) FFX_STRINGIFY(FFX_BUILD_INCLUDE_PATH(name, ENGINE_MAJOR_VERSION, ENGINE_MINOR_VERSION, 0))

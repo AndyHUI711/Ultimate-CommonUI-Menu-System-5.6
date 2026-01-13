@@ -1,6 +1,6 @@
 // This file is part of the FidelityFX Super Resolution 3.1 Unreal Engine Plugin.
 //
-// Copyright (c) 2023-2024 Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2023-2025 Advanced Micro Devices, Inc. All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,12 +25,20 @@
 #include "GlobalShader.h"
 #include "ShaderCompilerCore.h"
 #include "PipelineStateCache.h"
+#if UE_VERSION_AT_LEAST(5, 0, 0)
+#include "ShaderCompilerCore.h"
+#else
 #include "ShaderParameterUtils.h"
+#endif
 
 #if UE_VERSION_AT_LEAST(5, 2, 0)
 #include "DataDrivenShaderPlatformInfo.h"
 #else
 #include "RHIDefinitions.h"
+#endif
+
+#if UE_VERSION_OLDER_THAN(5, 0, 0)
+typedef FIntPoint FUintVector2;
 #endif
 
 //------------------------------------------------------------------------------------------------------
@@ -62,6 +70,11 @@ public:
 	}
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
+#if UE_VERSION_AT_LEAST(5, 0, 0)	
+		OutEnvironment.SetDefine(TEXT("UNREAL_VERSION"), 5);
+#else
+		OutEnvironment.SetDefine(TEXT("UNREAL_VERSION"), 4);
+#endif
 		OutEnvironment.CompilerFlags.Add(CFLAG_AllowTypedUAVLoads);
 		OutEnvironment.SetDefine(TEXT("THREADGROUP_SIZEX"), ThreadgroupSizeX);
 		OutEnvironment.SetDefine(TEXT("THREADGROUP_SIZEY"), ThreadgroupSizeY);
@@ -197,6 +210,8 @@ FFXFrameInterpolationCustomPresent::FFXFrameInterpolationCustomPresent()
 , bEnabled(false)
 , bResized(false)
 , bUseFFXSwapchain(false)
+, bHasInterpolatedRT(false)
+, bHasInterpolatedRHI(false)
 {
 	FMemory::Memzero(Desc);
 }
@@ -255,7 +270,9 @@ void FFXFrameInterpolationCustomPresent::OnBackBufferResize()
 
 	// Flush the outstanding GPU work and wait for it to complete.
 	FlushRenderingCommands();
+#if UE_VERSION_OLDER_THAN(5, 5, 0)
 	FRHICommandListExecutor::CheckNoOutstandingCmdLists();
+#endif
 }
 
 // Called from render thread to see if a native present will be requested for this frame.
@@ -263,6 +280,15 @@ void FFXFrameInterpolationCustomPresent::OnBackBufferResize()
 // match value subsequently returned by Present for this frame.
 bool FFXFrameInterpolationCustomPresent::NeedsNativePresent()
 {
+	if (Status == FFXFrameInterpolationCustomPresentStatus::PresentRT && (!bUseFFXSwapchain || bNeedsNativePresentRT))
+	{
+		if (!bHasInterpolatedRT)
+		{
+			SetEnabled(false);
+		}
+		bHasInterpolatedRT = false;
+	}
+
 	return bUseFFXSwapchain ? bNeedsNativePresentRT : true;
 }
 // In come cases we want to use custom present but still let the native environment handle 
@@ -289,11 +315,31 @@ bool FFXFrameInterpolationCustomPresent::Present(int32& InOutSyncInterval)
 #if (UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT || UE_BUILD_TEST)
 	bDrawDebugView = CVarFFXFIShowDebugView.GetValueOnAnyThread() != 0;
 #endif
+
+	if (bPresentRHI)
+	{
+		if (!bHasInterpolatedRHI && GetContext())
+		{
+			ffxConfigureDescFrameGeneration ConfigDesc;
+			FMemory::Memzero(ConfigDesc);
+			ConfigDesc.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION;
+			ConfigDesc.swapChain = GetBackend()->GetSwapchain(RHIViewport->GetNativeSwapChain());
+			ConfigDesc.frameGenerationEnabled = false;
+			ConfigDesc.allowAsyncWorkloads = false;
+			GetBackend()->UpdateSwapChain(GetContext(), ConfigDesc);
+		}
+		bHasInterpolatedRHI = false;
+	}
+
 	if (bUseFFXSwapchain && !bPresentRHI && !bDrawDebugView && Current.Interpolated.GetReference())
 	{
 		FfxSwapchain SwapChain = GetBackend()->GetSwapchain(RHIViewport->GetNativeSwapChain());
 		FfxApiResource OutputRes = GetBackend()->GetInterpolationOutput(SwapChain);
+#if UE_VERSION_AT_LEAST(5, 0, 0)
 		FfxApiResource Interpolated = GetBackend()->GetNativeResource(Current.Interpolated->GetRHI(), CVarFFXFICaptureDebugUI.GetValueOnAnyThread() ? FFX_API_RESOURCE_STATE_COMPUTE_READ : FFX_API_RESOURCE_STATE_COPY_DEST);
+#else
+		FfxApiResource Interpolated = GetBackend()->GetNativeResource(Current.Interpolated->GetRHI(ERenderTargetTexture::Targetable), CVarFFXFICaptureDebugUI.GetValueOnAnyThread() ? FFX_API_RESOURCE_STATE_COMPUTE_READ : FFX_API_RESOURCE_STATE_COPY_DEST);
+#endif
 		FfxCommandList CmdList = GetBackend()->GetInterpolationCommandList(SwapChain);
 		FIntPoint Size = FIntPoint(OutputRes.description.width, OutputRes.description.height);
 		if (CmdList)
@@ -326,7 +372,7 @@ void FFXFrameInterpolationCustomPresent::OnReleaseThreadOwnership()
 {
 }
 
-void FFXFrameInterpolationCustomPresent::CopyBackBufferRT(FTexture2DRHIRef InBackBuffer)
+void FFXFrameInterpolationCustomPresent::CopyBackBufferRT(FTextureRHIRef InBackBuffer)
 {
     if (Enabled() && (Status == FFXFrameInterpolationCustomPresentStatus::InterpolateRT || Status == FFXFrameInterpolationCustomPresentStatus::PresentRT))
     {
@@ -336,10 +382,15 @@ void FFXFrameInterpolationCustomPresent::CopyBackBufferRT(FTexture2DRHIRef InBac
         Info.Size.X = InBackBuffer->GetSizeX();
         Info.Size.Y = InBackBuffer->GetSizeY();
     
+#if UE_VERSION_AT_LEAST(5, 0, 0)
+		ETextureCreateFlags DescFlags = TexCreate_UAV;
+#else
+		ETextureCreateFlags DescFlags = TexCreate_None;
+#endif
         FPooledRenderTargetDesc RTDesc(FPooledRenderTargetDesc::Create2DDesc(FIntPoint(Info.Size.X, Info.Size.Y),
             InBackBuffer->GetFormat(),
             FClearValueBinding::Transparent,
-			TexCreate_UAV,
+			DescFlags,
 			TexCreate_UAV|TexCreate_ShaderResource,
             false,
             1,
@@ -354,6 +405,7 @@ void FFXFrameInterpolationCustomPresent::CopyBackBufferRT(FTexture2DRHIRef InBac
 				auto& Dest = Current.Interpolated;
                 GRenderTargetPool.FindFreeElement(RHICmdList, RTDesc, Dest, TEXT("Interpolated"));
 				check(FIntPoint(InBackBuffer->GetSizeXYZ().X, InBackBuffer->GetSizeXYZ().Y) == Dest->GetDesc().Extent);
+#if UE_VERSION_AT_LEAST(5, 0, 0)				
 				RHICmdList.Transition({
 					FRHITransitionInfo(InBackBuffer, ERHIAccess::Unknown, ERHIAccess::CopySrc),
 					FRHITransitionInfo(Dest->GetRHI(), ERHIAccess::Unknown, ERHIAccess::CopyDest)
@@ -365,17 +417,35 @@ void FFXFrameInterpolationCustomPresent::CopyBackBufferRT(FTexture2DRHIRef InBac
 					FRHITransitionInfo(InBackBuffer, ERHIAccess::Unknown, ERHIAccess::Present),
 					FRHITransitionInfo(Dest->GetRHI(), ERHIAccess::Unknown, ERHIAccess::SRVCompute),
 					});
+#else
+				RHICmdList.Transition({
+					FRHITransitionInfo(InBackBuffer, ERHIAccess::Unknown, ERHIAccess::CopySrc),
+					FRHITransitionInfo(Dest->GetRHI(ERenderTargetTexture::Targetable), ERHIAccess::Unknown, ERHIAccess::CopyDest)
+					});
 
+                RHICmdList.CopyTexture(InBackBuffer, Dest->GetRHI(ERenderTargetTexture::Targetable), Info);
+
+				RHICmdList.Transition({
+					FRHITransitionInfo(InBackBuffer, ERHIAccess::Unknown, ERHIAccess::Present),
+					FRHITransitionInfo(Dest->GetRHI(ERenderTargetTexture::Targetable), ERHIAccess::Unknown, ERHIAccess::SRVCompute),
+					});
+#endif
 				bHasValidInterpolatedRT = true;
                 break;
             }
             case FFXFrameInterpolationCustomPresentStatus::PresentRT:
             {
+
+
+#if UE_VERSION_AT_LEAST(5, 5, 0)
+				SCOPED_DRAW_EVENT(RHICmdList, FFXFrameInterpolationCustomPresent::CopyBackBufferRT PresentRT)
+#else
 				RHICmdList.PushEvent(TEXT("FFXFrameInterpolationCustomPresent::CopyBackBufferRT PresentRT"), FColor::White);
+#endif
 
 				auto& SecondFrameUI = Current.RealFrame;
 				GRenderTargetPool.FindFreeElement(RHICmdList, RTDesc, SecondFrameUI, TEXT("RealFrame"));
-
+#if UE_VERSION_AT_LEAST(5, 0, 0)
 				RHICmdList.Transition({
 					FRHITransitionInfo(InBackBuffer, ERHIAccess::Unknown, ERHIAccess::CopySrc),
 					FRHITransitionInfo(SecondFrameUI->GetRHI(), ERHIAccess::Unknown, ERHIAccess::CopyDest)
@@ -383,16 +453,28 @@ void FFXFrameInterpolationCustomPresent::CopyBackBufferRT(FTexture2DRHIRef InBac
 
 				check(FIntPoint(InBackBuffer->GetSizeXYZ().X, InBackBuffer->GetSizeXYZ().Y) == SecondFrameUI->GetDesc().Extent);
 				RHICmdList.CopyTexture(InBackBuffer, SecondFrameUI->GetRHI(), Info);
+#else
+				RHICmdList.Transition({
+					FRHITransitionInfo(InBackBuffer, ERHIAccess::Unknown, ERHIAccess::CopySrc),
+					FRHITransitionInfo(SecondFrameUI->GetRHI(ERenderTargetTexture::Targetable), ERHIAccess::Unknown, ERHIAccess::CopyDest)
+					});
 
+				check(FIntPoint(InBackBuffer->GetSizeXYZ().X, InBackBuffer->GetSizeXYZ().Y) == SecondFrameUI->GetDesc().Extent);
+				RHICmdList.CopyTexture(InBackBuffer, SecondFrameUI->GetRHI(ERenderTargetTexture::Targetable), Info);
+#endif
 				if (CVarFFXFICaptureDebugUI.GetValueOnAnyThread() && bHasValidInterpolatedRT && (Mode == EFFXFrameInterpolationPresentModeRHI))
 				{
 					auto& FirstFrame = InterpolatedNoUI;
 					auto& SecondFrame = RealFrameNoUI;
 					auto& FirstFrameUI = Current.Interpolated;
-#if UE_VERSION_AT_LEAST(5, 3, 0)
+#if UE_VERSION_AT_LEAST(5, 6, 0)
+					auto RWSecondFrameUI = FRHICommandListExecutor::GetImmediateCommandList().CreateUnorderedAccessView(SecondFrameUI->GetRHI(), FRHIViewDesc::CreateTextureUAV().SetDimensionFromTexture(SecondFrameUI->GetRHI()));
+#elif UE_VERSION_AT_LEAST(5, 3, 0)
 					auto RWSecondFrameUI = FRHICommandListExecutor::GetImmediateCommandList().CreateUnorderedAccessView(SecondFrameUI->GetRHI());
-#else
+#elif UE_VERSION_AT_LEAST(5, 0, 0)
 					auto RWSecondFrameUI = RHICreateUnorderedAccessView(SecondFrameUI->GetRHI());
+#else
+					auto RWSecondFrameUI = RHICreateUnorderedAccessView(SecondFrameUI->GetRHI(ERenderTargetTexture::Targetable));
 #endif
 
 					TShaderRef<FFXFIAdditionalUICS> ComputeShader = TShaderMapRef<FFXFIAdditionalUICS>(GetGlobalShaderMap(GMaxRHIFeatureLevel));
@@ -403,6 +485,7 @@ void FFXFrameInterpolationCustomPresent::CopyBackBufferRT(FTexture2DRHIRef InBac
 
 					FIntPoint Extent(InBackBuffer->GetSizeXYZ().X, InBackBuffer->GetSizeXYZ().Y);
 					SetComputePipelineState(RHICmdList, ComputeShader.GetComputeShader());
+#if UE_VERSION_AT_LEAST(5, 0, 0)
 					ComputeShader->SetParameters(RHICmdList, FUintVector2(Extent.X, Extent.Y), FUintVector2(0, 0), FirstFrame->GetRHI(), FirstFrameUI->GetRHI(), SecondFrame->GetRHI(), RWSecondFrameUI);
 
 					RHICmdList.DispatchComputeShader(FMath::DivideAndRoundUp(Extent.X, FFXFIAdditionalUICS::ThreadgroupSizeX), FMath::DivideAndRoundUp(Extent.Y, FFXFIAdditionalUICS::ThreadgroupSizeY), 1);
@@ -415,6 +498,20 @@ void FFXFrameInterpolationCustomPresent::CopyBackBufferRT(FTexture2DRHIRef InBac
 					check(SecondFrameUI->GetDesc().Extent == FIntPoint(InBackBuffer->GetSizeXYZ().X, InBackBuffer->GetSizeXYZ().Y));
 
 					RHICmdList.CopyTexture(SecondFrameUI->GetRHI(), InBackBuffer, Info);
+#else
+					ComputeShader->SetParameters(RHICmdList, FIntPoint(Extent.X, Extent.Y), FIntPoint(0, 0), FirstFrame->GetRHI(ERenderTargetTexture::Targetable), FirstFrameUI->GetRHI(ERenderTargetTexture::Targetable), SecondFrame->GetRHI(ERenderTargetTexture::Targetable), RWSecondFrameUI);
+
+					RHICmdList.DispatchComputeShader(FMath::DivideAndRoundUp(Extent.X, FFXFIAdditionalUICS::ThreadgroupSizeX), FMath::DivideAndRoundUp(Extent.Y, FFXFIAdditionalUICS::ThreadgroupSizeY), 1);
+
+					RHICmdList.Transition({
+						FRHITransitionInfo(SecondFrameUI->GetRHI(ERenderTargetTexture::Targetable), ERHIAccess::Unknown, ERHIAccess::CopySrc),
+						FRHITransitionInfo(InBackBuffer, ERHIAccess::Unknown, ERHIAccess::CopyDest)
+						});
+
+					check(SecondFrameUI->GetDesc().Extent == FIntPoint(InBackBuffer->GetSizeXYZ().X, InBackBuffer->GetSizeXYZ().Y));
+
+					RHICmdList.CopyTexture(SecondFrameUI->GetRHI(ERenderTargetTexture::Targetable), InBackBuffer, Info);
+#endif
 				}
 
 				RHICmdList.Transition({
@@ -423,7 +520,9 @@ void FFXFrameInterpolationCustomPresent::CopyBackBufferRT(FTexture2DRHIRef InBac
 
 				bHasValidInterpolatedRT = false;
 
+#if UE_VERSION_OLDER_THAN(5, 5, 0)
 				RHICmdList.PopEvent();
+#endif
 
                 break;
             }
@@ -451,20 +550,30 @@ void FFXFrameInterpolationCustomPresent::SetCustomPresentStatus(FFXFrameInterpol
 	{
 		case FFXFrameInterpolationCustomPresentStatus::InterpolateRT:
 		{
-            Status = Flag;
-			bNeedsNativePresentRT = false;
+			bHasInterpolatedRT = true;
+			if (GetMode() != EFFXFrameInterpolationPresentModeNative)
+			{
+				Status = Flag;
+				bNeedsNativePresentRT = false;
+				break;
+			}
+			// Else is deliberately falling through
+		}
+		case FFXFrameInterpolationCustomPresentStatus::PresentRT:
+		{
+            Status = FFXFrameInterpolationCustomPresentStatus::PresentRT;
+			bNeedsNativePresentRT = true;
 			break;
 		}
 		case FFXFrameInterpolationCustomPresentStatus::InterpolateRHI:
 		{
-			bPresentRHI = false;
-			break;
-		}
-		case FFXFrameInterpolationCustomPresentStatus::PresentRT:
-		{
-            Status = Flag;
-			bNeedsNativePresentRT = true;
-			break;
+			bHasInterpolatedRHI = true;
+			if (GetMode() != EFFXFrameInterpolationPresentModeNative)
+			{
+				bPresentRHI = false;
+				break;
+			}
+			// Else is deliberately falling through
 		}
 		case FFXFrameInterpolationCustomPresentStatus::PresentRHI:
 		{

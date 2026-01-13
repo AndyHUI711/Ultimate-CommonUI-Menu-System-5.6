@@ -24,6 +24,17 @@
 
 #include "XeSSCommonMacros.h"
 
+class FRDGBuilder;
+class FViewInfo;
+enum class EPostProcessMaterialInput : uint32;
+struct FPostProcessMaterialInputs;
+
+#if ENGINE_MAJOR_VERSION >= 5
+struct FSceneTextures;
+#else
+class FSceneRenderTargets;
+#endif
+
 #if XESS_ENGINE_VERSION_GEQ(5, 3)
 #define XESS_UNREAL_GET_PASS_INPUTS_TEXTURE(PassInputs, TextureName) \
 	(PassInputs.TextureName.Texture)
@@ -31,3 +42,19 @@
 #define XESS_UNREAL_GET_PASS_INPUTS_TEXTURE(PassInputs, TextureName) \
 	(PassInputs.TextureName##Texture)
 #endif
+
+namespace XeSSUnreal
+{
+#if ENGINE_MAJOR_VERSION >= 5
+	using XSceneTextures = ::FSceneTextures;
+#else
+	using XSceneTextures = ::FSceneRenderTargets;
+#endif
+
+	XESSUNREAL_API const XSceneTextures& GetSceneTextures(const FViewInfo& ViewInfo, FRDGBuilder& GraphBuilder);
+	XESSUNREAL_API FRDGTexture* GetSceneDepthTexture(const XSceneTextures& SceneTextures, FRDGBuilder& GraphBuilder);
+	XESSUNREAL_API FRDGTexture* GetSceneVelocityTexture(const XSceneTextures& SceneTextures, FRDGBuilder& GraphBuilder);
+
+	XESSUNREAL_API FScreenPassTexture ReturnUntouchedSceneColorForPostProcessing(const FPostProcessMaterialInputs& Inputs, FRDGBuilder& GraphBuilder);
+	XESSUNREAL_API FScreenPassTexture GetInputScreenPassTexture(const FPostProcessMaterialInputs& Inputs, EPostProcessMaterialInput Input, FRDGBuilder& GraphBuilder);
+}

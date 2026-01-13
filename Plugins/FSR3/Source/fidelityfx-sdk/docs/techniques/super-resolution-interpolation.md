@@ -1,27 +1,32 @@
-<!-- @page page_techniques_super-resolution-interpolation FidelityFX Super Resolution 3.1.1 -->
+<!-- @page page_techniques_super-resolution-interpolation FidelityFX Super Resolution 3.1.4 -->
 
-<h1>FidelityFX Super Resolution 3.1.1 (FSR3) - Upscaling and Frame Generation</h1>
+<h1>FidelityFX Super Resolution 3.1.4 (FSR3) - Upscaling and Frame Generation</h1>
 
-![Screenshot](media/super-resolution-temporal/fsr3-sample_resized.jpg "A screenshot showcasing the final output of the effect")
+![Screenshot](media/super-resolution-temporal/fsr3-sample.jpg "A screenshot showcasing the final output of the effect")
 
 <h2>Table of contents</h2>
 
-- [FidelityFX Super Resolution 3.1.0 (FSR3)](#fidelityfx-super-resolution-303-fsr3)
+- [FidelityFX Super Resolution 3.1.4 (FSR3)](#fidelityfx-super-resolution-314-fsr3)
   - [Table of contents](#table-of-contents)
   - [Introduction](#introduction)
   - [Integration guidelines](#integration-guidelines)
     - [Shading language and API requirements](#shading-language-and-api-requirements)
-      - [DirectX 12 + HLSL](#directx-12--hlsl)
-      - [Vulkan + GLSL](#vulkan--glsl)
-  - [Quick start checklist](#quick-start-checklist)
+      - [DirectX 12](#directx-12)
+      - [Vulkan](#vulkan)
+    - [Quick start checklist](#quick-start-checklist)
     - [Walkthrough](#walkthrough)
       - [Add upscaling through FSR3 interface](#add-upscaling-through-fsr3-interface)
-      - [Enable FSR3's proxy frame interpolation swapchain](#enable-fsr3-s-proxy-frame-interpolation-swapchain)
+      - [Get resolution based on settings](#get-resolution-based-on-settings)
+      - [Apply camera jitter](#apply-camera-jitter)
       - [Dispatch Upscaling](#dispatch-upscaling)
+      - [Enable FSR3’s proxy frame generation swapchain](#enable-fsr3-s-proxy-frame-generation-swapchain)
+      - [Create frame generation context](#create-frame-generation-context)
       - [Configure frame interpolation](#configure-frame-interpolation)
       - [UI composition](#ui-composition)
       - [Shutdown](#shutdown)
     - [Thread Safety](#thread-safety)
+    - [Resource Lifetime](#resource-lifetime)
+    - [Debug Checker](#debug-checker)
   - [The Technique](#the-technique)
   - [Memory Usage](#memory-usage)
   - [See also](#see-also)
@@ -475,7 +480,7 @@ In that case the surface needs to be registered to the swap chain by calling `ff
 FfxResource uiColor = ffxGetResource(m_pUiTexture[m_curUiTextureIndex]->GetResource(), L"FSR3_UiTexture", FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceDX12 uiConfig{};
 uiConfig.uiResource = uiColor;
-uiConfig.flags      = m_DoublebufferInSwapchain ? FFX_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING : 0;
+uiConfig.flags      = m_DoublebufferInSwapchain ? FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING : 0;
 ffx::Configure(m_SwapChainContext, uiConfig);
 ```
 The final method to handle the UI is to provide a `HUDLessColor` surface in the `FfxFrameGenerationConfig`. This surface will get used during frame interpolation to detect the UI and avoid distortion on UI elements. This method has been added for compatibility with engines that can not apply either of the other two options for UI rendering.
@@ -519,8 +524,48 @@ Finally, destroy the proxy swap chain by releasing the handle, destroying the co
 
 <h3>Thread safety</h3>
 
-  The ffx-api context is not guarranted to be thread safe. In this technique, `FrameGenContext` and `SwapChainContext` are not thread safe. Race condition symptom includes `access violation error` crash or interpolation visual artifact. It's not obvious but `FrameInterpolationSwapchainDX12::Present()` actually access `SwapChainContext` and `FrameGenContext` (for dispatching Optical Flow and Frame Generation). A race condition occurs if app threads can simutaneously call `FrameInterpolationSwapchainDX12::Present()` and `Dispatch(m_FrameGenContext, DispatchDescFrameGenerationPrepare)`. Another race condition occurance is if app threads can simutaneously call `FrameInterpolationSwapchainDX12::Present()` and `DestroyContext(SwapChainContext)`. App could acquire mutex lock before calling ffx functions that access `FrameGenContext` or `SwapChainContext` to guarantee at any time there is at most 1 thread that can access the context.
-  
+  The ffx-api context is not guarranted to be thread safe. In this technique, `FrameGenContext` and `SwapChainContext` are not thread safe. Race condition symptom includes `access violation error` crash, interpolation visual artifact, and infinite wait in Dx12CommandPool destructor when releasing swapchain. It's not obvious but `FrameInterpolationSwapchainDX12::Present()` actually access `SwapChainContext` and `FrameGenContext` (for dispatching Optical Flow and Frame Generation). A race condition occurs if app threads can simutaneously call `FrameInterpolationSwapchainDX12::Present()` and `Dispatch(m_FrameGenContext, DispatchDescFrameGenerationPrepare)`. Another race condition occurance is if app threads can simutaneously call `FrameInterpolationSwapchainDX12::Present()` and `DestroyContext(SwapChainContext)`. App could acquire mutex lock before calling ffx functions that access `FrameGenContext` or `SwapChainContext` to guarantee at any time there is at most 1 thread that can access the context.
+
+<h3>Resource Lifetime</h3>
+
+<h4>When UiTexture composition mode is used</h4> 
+
+<h5>If FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING is set:</h5>
+
+The `UiTexture` gets copied to an internal resource on the game queue
+The `UiTexture` may be reused on the GFX queue immediately in the next frame
+
+<h5> If FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING is not set:</h5>
+
+The application is responsible to ensure `UiTexture` persists until composition of the real frame is finished
+This is typically in the middle of the next frame, so the `UiTexture` should not be used during the next frame. The application must ensure double buffering of the UITexture
+
+<h4>When HUDLess composition mode is used:</h4>
+
+The HUDLess texture will be used during FrameInterpolation
+The application is responsible to ensure it persists until FrameInterpolation is complete
+If `FfxFrameGenerationConfig::allowAsyncWorkloads` is true:
+Frameinterpolation happens on an async compute queue so the HUDLess texture needs to be double buffered by the application
+If `FfxFrameGenerationConfig:: allowAsyncWorkloads` is false:
+Frameinterpolation happens on the game GFX queue, so app can safely modify HUDLess texture in the next frame
+
+<h4>When distortionField texture is registered to FrameInterpolation:</h4>
+
+The application is responsible to ensure `distortionField` texture persists until FrameInterpolation is complete
+If `FfxFrameGenerationConfig::allowAsyncWorkloads` is true:
+Frameinterpolation happens on an async compute queue so the `distortionField` texture needs to be double buffered by the application
+If `FfxFrameGenerationConfig:: allowAsyncWorkloads` is false:
+Frameinterpolation happens on the game GFX queue, so app can safely modify `distortionField` texture in the next frame
+
+<h3>Debug Checker</h3>
+Enable debug checker to validate application supplied inputs at dispatch upscale. This feature can be enabled in any build configuration of the runtime IE. release binaries from PrebuiltSignedDll folder or debug build. It is recommended this is enabled only in development builds of game.
+
+Passing 
+`FFX_FRAMEGENERATION_ENABLE_DEBUG_CHECKING` flag within `ffxCreateContextDescFrameGeneration` will output textual warnings from frame generation to debugger TTY by default. ffx::Configure API allow application set callback function to pass the messages to the underlying application. Assign `fpMessage` in `ffxConfigureDescGlobalDebug1` to a suitiable function. 
+
+An example of the kind of output that can occur when debug checker observes possible issues is below:
+
+FSR_API_DEBUG_WARNING: ffxDispatchDescFrameGenerationPrepareCameraInfo needs to be passed as linked struct. This is a required input to FSR3.1.4 and onwards for best quality.
 
 <h2>The Technique</h2>
 

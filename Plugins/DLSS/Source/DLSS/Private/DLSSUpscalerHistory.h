@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020 - 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+* Copyright (c) 2020 - 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
 * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
 * property and proprietary rights in and to this material, related
@@ -13,7 +13,7 @@
 
 #include "CoreMinimal.h"
 #include "Runtime/Launch/Resources/Version.h"
-
+#include "Misc/EngineVersionComparison.h"
 #if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 3
 #include "TemporalUpscaler.h"
 #else
@@ -42,8 +42,12 @@ private:
 	// in 5.3+ the debug name must match the upscaler's debug name, and since the name includes whether we're running DLSS-RR the history needs to know the denoiser mode
 	ENGXDLSSDenoiserMode DenoiserMode;
 
-
+#if UE_VERSION_OLDER_THAN(5,6,0)
 	virtual uint32 AddRef() const final
+#else
+	virtual FReturnedRefCountValue AddRef() const final
+#endif
+
 	{
 		return FRefCountBase::AddRef();
 	}

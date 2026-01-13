@@ -22,6 +22,9 @@
 
 /*
 * XeSSCommon module is designed to offer shared internal functions.
+* Public headers should be organized via feature categories (different from XeSSUnreal)
+* Naming rules:
+* 1. If overloading functions exist across different Engine versions, a unique function will be named with postfix "_Unified" to avoid naming conflicts
 */
 
 using UnrealBuildTool;
@@ -34,10 +37,36 @@ public class XeSSCommon : ModuleRules
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
 		PrivateDependencyModuleNames.AddRange(
-			new string[]
-			{
-				"Core",
+			new string[] {
+				"Projects",
 			}
 		);
+
+		PublicDependencyModuleNames.AddRange(
+			new string[] {
+				"Core",
+				"Engine",
+			}
+		);
+	}
+
+	public static bool IsEngineVersionAtLeast(int MajorVersion, int MinorVersion)
+	{
+		ReadOnlyBuildVersion engineVersion = ReadOnlyBuildVersion.Current;
+		return engineVersion.MajorVersion > MajorVersion ||
+			(engineVersion.MajorVersion == MajorVersion && engineVersion.MinorVersion >= MinorVersion);
+	}
+
+	public static bool IsEngineVersionEqual(int MajorVersion, int MinorVersion)
+	{
+		ReadOnlyBuildVersion engineVersion = ReadOnlyBuildVersion.Current;
+		return engineVersion.MajorVersion == MajorVersion && engineVersion.MinorVersion == MinorVersion;
+	}
+
+	public static bool IsEngineVersionOlderThan(int MajorVersion, int MinorVersion)
+	{
+		ReadOnlyBuildVersion engineVersion = ReadOnlyBuildVersion.Current;
+		return engineVersion.MajorVersion < MajorVersion ||
+			(engineVersion.MajorVersion == MajorVersion && engineVersion.MinorVersion < MinorVersion);
 	}
 }

@@ -28,15 +28,15 @@
 class FXeSSRHI;
 class FXeSSUpscaler;
 
-class FXeSS : public IModuleInterface
+class FXeSSModule : public IModuleInterface
 {
 public:
-	FXeSS() {};
-	/** IModuleInterface implementation */
-	virtual void StartupModule() override;
-	virtual void ShutdownModule() override;
+	void StartupModule() override;
+	void ShutdownModule() override;
 
-	virtual FXeSSRHI* GetXeSSRHI() const;
-	virtual FXeSSUpscaler* GetXeSSUpscaler() const;
-	virtual bool IsXeSSSupported() const;
+	void OnPostEngineInit();
+
+	XESSCORE_API FXeSSRHI* GetXeSSRHI() const;
+	XESSCORE_API FXeSSUpscaler* GetXeSSUpscaler() const;
+	XESSCORE_API bool IsXeSSSupported() const;
 };

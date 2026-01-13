@@ -24,5 +24,5 @@
 
 #include "Modules/ModuleInterface.h"
 
-class FXeSSCommon : public IModuleInterface
+class FXeSSCommonModule : public IModuleInterface
 {};

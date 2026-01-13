@@ -1,21 +1,26 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.4.8",
+	"VersionName": "2.1.1.1",
 	"FriendlyName": "Intel® XeSS",
 	"Description": "Intel® Xe Super Sampling (XeSS) technology uses machine learning to deliver more performance with exceptional image quality.",
 	"Category": "Rendering",
 	"CreatedBy": "Intel Corporation",
-	"CreatedByURL": "",
-	"DocsURL": "",
-	"MarketplaceURL": "",
-	"SupportURL": "",
-	"EngineVersion": "5.4.0",
+	"CreatedByURL": "https://gamedev.intel.com/xess",
+	"DocsURL": "https://www.intel.com/content/www/us/en/developer/articles/technical/xess-plugin-for-unreal-engine.html",
+	"MarketplaceURL": "https://www.fab.com/listings/8ab057da-982a-4e3b-8c56-ab56720d4641",
+	"SupportURL": "https://github.com/GameTechDev/XeSSUnrealPlugin/issues",
+	"EngineVersion": "5.6.0",
 	"CanContainContent": true,
 	"Installed": true,
 	"Modules": [
 		{
 			"Name": "XeSSCommon",
+			"Type": "Runtime",
+			"LoadingPhase": "EarliestPossible"
+		},
+		{
+			"Name": "XeSSSDK",
 			"Type": "Runtime",
 			"LoadingPhase": "EarliestPossible",
 			"PlatformAllowList": [
@@ -41,7 +46,39 @@
 		{
 			"Name": "XeSSCore",
 			"Type": "Runtime",
+			"LoadingPhase": "PostSplashScreen",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		},
+		{
+			"Name": "XeSSD3D11RHI",
+			"Type": "Runtime",
 			"LoadingPhase": "PostEngineInit",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		},
+		{
+			"Name": "XeSSD3D12RHI",
+			"Type": "Runtime",
+			"LoadingPhase": "PostEngineInit",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		},
+		{
+			"Name": "XeSSVulkanRHI",
+			"Type": "Runtime",
+			"LoadingPhase": "PostEngineInit",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		},
+		{
+			"Name": "XeSSVulkanRHISetup",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
 			"PlatformAllowList": [
 				"Win64"
 			]
@@ -50,6 +87,40 @@
 			"Name": "XeSSBlueprint",
 			"Type": "Runtime",
 			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "XeLLCore",
+			"Type": "ClientOnly",
+			"LoadingPhase": "PostSplashScreen",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		},
+		{
+			"Name": "XeLLBlueprint",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "XeFGCore",
+			"Type": "Runtime",
+			"LoadingPhase": "PostSplashScreen",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		},
+		{
+			"Name": "XeFGBlueprint",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "XeFGRHI",
+			"Type": "Runtime",
+			"LoadingPhase": "PostSplashScreen",
+			"PlatformAllowList": [
+				"Win64"
+			]
 		}
 	],
 	"LocalizationTargets": [

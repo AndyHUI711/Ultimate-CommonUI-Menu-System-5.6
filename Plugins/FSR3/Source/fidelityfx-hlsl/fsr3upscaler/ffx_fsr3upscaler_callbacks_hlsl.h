@@ -40,15 +40,8 @@
 
 #pragma warning(disable: 3205)  // conversion from larger type to smaller
 
-#define DECLARE_SRV_REGISTER(regIndex)  t##regIndex
-#define DECLARE_UAV_REGISTER(regIndex)  u##regIndex
-#define DECLARE_CB_REGISTER(regIndex)   b##regIndex
-#define FFX_FSR3UPSCALER_DECLARE_SRV(regIndex)  register(DECLARE_SRV_REGISTER(regIndex))
-#define FFX_FSR3UPSCALER_DECLARE_UAV(regIndex)  register(DECLARE_UAV_REGISTER(regIndex))
-#define FFX_FSR3UPSCALER_DECLARE_CB(regIndex)   register(DECLARE_CB_REGISTER(regIndex))
-
 #if defined(FSR3UPSCALER_BIND_CB_FSR3UPSCALER)
-cbuffer cbFSR3Upscaler : FFX_FSR3UPSCALER_DECLARE_CB(FSR3UPSCALER_BIND_CB_FSR3UPSCALER)
+cbuffer cbFSR3Upscaler
 {
     FfxInt32x2    iRenderSize;
     FfxInt32x2    iPreviousFrameRenderSize;
@@ -77,6 +70,10 @@ cbuffer cbFSR3Upscaler : FFX_FSR3UPSCALER_DECLARE_CB(FSR3UPSCALER_BIND_CB_FSR3UP
     FfxFloat32    fFrameIndex;
 
     FfxFloat32    fVelocityFactor;
+    FfxFloat32    fReactivenessScale;
+    FfxFloat32    fShadingChangeScale;
+    FfxFloat32    fAccumulationAddedPerFrame;
+    FfxFloat32    fMinDisocclusionAccumulation;
 };
 
 #define FFX_FSR3UPSCALER_CONSTANT_BUFFER_1_SIZE (sizeof(cbFSR3Upscaler) / 4)  // Number of 32-bit values. This must be kept in sync with the cbFSR3Upscaler size.
@@ -177,6 +174,16 @@ FfxFloat32 VelocityFactor()
     return fVelocityFactor;
 }
 
+FfxFloat32 AccumulationAddedPerFrame()
+{
+    return fAccumulationAddedPerFrame;
+}
+
+FfxFloat32 MinDisocclusionAccumulation()
+{
+    return fMinDisocclusionAccumulation;
+}
+
 #endif // #if defined(FSR3UPSCALER_BIND_CB_FSR3UPSCALER)
 
 #define FFX_FSR3UPSCALER_ROOTSIG_STRINGIFY(p) FFX_FSR3UPSCALER_ROOTSIG_STR(p)
@@ -224,7 +231,7 @@ FfxFloat32 VelocityFactor()
 #endif // #if FFX_FSR3UPSCALER_EMBED_ROOTSIG
 
 #if defined(FSR3UPSCALER_BIND_CB_AUTOREACTIVE)
-cbuffer cbGenerateReactive : FFX_FSR3UPSCALER_DECLARE_CB(FSR3UPSCALER_BIND_CB_AUTOREACTIVE)
+cbuffer cbGenerateReactive
 {
     FfxFloat32   fTcThreshold; // 0.1 is a good starting value, lower will result in more TC pixels
     FfxFloat32   fTcScale;
@@ -254,7 +261,7 @@ FfxFloat32 ReactiveMax()
 #endif // #if defined(FSR3UPSCALER_BIND_CB_AUTOREACTIVE)
 
 #if defined(FSR3UPSCALER_BIND_CB_RCAS)
-cbuffer cbRCAS : FFX_FSR3UPSCALER_DECLARE_CB(FSR3UPSCALER_BIND_CB_RCAS)
+cbuffer cbRCAS
 {
     FfxUInt32x4 rcasConfig;
 };
@@ -267,7 +274,7 @@ FfxUInt32x4 RCASConfig()
 
 
 #if defined(FSR3UPSCALER_BIND_CB_REACTIVE)
-cbuffer cbGenerateReactive : FFX_FSR3UPSCALER_DECLARE_CB(FSR3UPSCALER_BIND_CB_REACTIVE)
+cbuffer cbGenerateReactive
 {
     FfxFloat32   gen_reactive_scale;
     FfxFloat32   gen_reactive_threshold;
@@ -297,8 +304,8 @@ FfxUInt32 GenReactiveFlags()
 #endif // #if defined(FSR3UPSCALER_BIND_CB_REACTIVE)
 
 #if defined(FSR3UPSCALER_BIND_CB_SPD)
-cbuffer cbSPD : FFX_FSR3UPSCALER_DECLARE_CB(FSR3UPSCALER_BIND_CB_SPD) {
-
+cbuffer cbSPD
+{
     FfxUInt32   mips;
     FfxUInt32   numWorkGroups;
     FfxUInt32x2 workGroupOffset;
@@ -326,11 +333,11 @@ FfxUInt32x2 SPD_RenderSize()
 }
 #endif // #if defined(FSR3UPSCALER_BIND_CB_SPD)
 
-SamplerState s_PointClamp : register(s0);
-SamplerState s_LinearClamp : register(s1);
+SamplerState s_PointClamp;
+SamplerState s_LinearClamp;
 
 #if defined(FSR3UPSCALER_BIND_SRV_SPD_MIPS)
-Texture2D<FfxFloat32x2> r_spd_mips : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_SPD_MIPS);
+Texture2D<FfxFloat32x2> r_spd_mips;
 
 FfxInt32x2 GetSPDMipDimensions(FfxUInt32 uMipLevel)
 {
@@ -349,7 +356,7 @@ FfxFloat32x2 SampleSPDMipLevel(FfxFloat32x2 fUV, FfxUInt32 mipLevel)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_INPUT_DEPTH)
-Texture2D<FfxFloat32> r_input_depth : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_INPUT_DEPTH);
+Texture2D<FfxFloat32> r_input_depth;
 
 FfxFloat32 LoadInputDepth(FfxUInt32x2 iPxPos)
 {
@@ -363,11 +370,11 @@ FfxFloat32 SampleInputDepth(FfxFloat32x2 fUV)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_REACTIVE_MASK)
-Texture2D<FfxFloat32> r_reactive_mask : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_REACTIVE_MASK);
+Texture2D<FfxFloat32> r_reactive_mask;
 
 FfxFloat32 LoadReactiveMask(FfxUInt32x2 iPxPos)
 {
-    return r_reactive_mask[iPxPos];
+    return r_reactive_mask[iPxPos] * fReactivenessScale;
 }
 
 FfxInt32x2 GetReactiveMaskResourceDimensions()
@@ -381,12 +388,12 @@ FfxInt32x2 GetReactiveMaskResourceDimensions()
 
 FfxFloat32 SampleReactiveMask(FfxFloat32x2 fUV)
 {
-    return r_reactive_mask.SampleLevel(s_LinearClamp, fUV, 0).x;
+    return r_reactive_mask.SampleLevel(s_LinearClamp, fUV, 0).x * fReactivenessScale;
 }
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_TRANSPARENCY_AND_COMPOSITION_MASK)
-Texture2D<FfxFloat32> r_transparency_and_composition_mask : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_TRANSPARENCY_AND_COMPOSITION_MASK);
+Texture2D<FfxFloat32> r_transparency_and_composition_mask;
 
 FfxFloat32 LoadTransparencyAndCompositionMask(FfxUInt32x2 iPxPos)
 {
@@ -409,7 +416,7 @@ FfxFloat32 SampleTransparencyAndCompositionMask(FfxFloat32x2 fUV)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_INPUT_COLOR)
-Texture2D<FfxFloat32x4> r_input_color_jittered : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_INPUT_COLOR);
+Texture2D<FfxFloat32x4> r_input_color_jittered;
 
 FfxFloat32x3 LoadInputColor(FfxUInt32x2 iPxPos)
 {
@@ -423,7 +430,7 @@ FfxFloat32x3 SampleInputColor(FfxFloat32x2 fUV)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_INPUT_MOTION_VECTORS)
-Texture2D<FfxFloat32x4> r_input_motion_vectors : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_INPUT_MOTION_VECTORS);
+Texture2D<FfxFloat32x4> r_input_motion_vectors;
 
 FfxFloat32x2 LoadInputMotionVector(FfxUInt32x2 iPxDilatedMotionVectorPos)
 {
@@ -440,7 +447,7 @@ FfxFloat32x2 LoadInputMotionVector(FfxUInt32x2 iPxDilatedMotionVectorPos)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_INTERNAL_UPSCALED)
-Texture2D<FfxFloat32x4> r_internal_upscaled_color : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_INTERNAL_UPSCALED);
+Texture2D<FfxFloat32x4> r_internal_upscaled_color;
 
 FfxFloat32x4 LoadHistory(FfxUInt32x2 iPxHistory)
 {
@@ -454,7 +461,7 @@ FfxFloat32x4 SampleHistory(FfxFloat32x2 fUV)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_LUMA_HISTORY)
-RWTexture2D<FfxFloat32x4> rw_luma_history : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_LUMA_HISTORY);
+RWTexture2D<FfxFloat32x4> rw_luma_history;
 
 void StoreLumaHistory(FfxUInt32x2 iPxPos, FfxFloat32x4 fLumaHistory)
 {
@@ -463,7 +470,7 @@ void StoreLumaHistory(FfxUInt32x2 iPxPos, FfxFloat32x4 fLumaHistory)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_LUMA_HISTORY)
-Texture2D<FfxFloat32x4> r_luma_history : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_LUMA_HISTORY);
+Texture2D<FfxFloat32x4> r_luma_history;
 
 FfxFloat32x4 LoadLumaHistory(FfxInt32x2 iPxPos)
 {
@@ -477,7 +484,7 @@ FfxFloat32x4 SampleLumaHistory(FfxFloat32x2 fUV)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_RCAS_INPUT) 
-Texture2D<FfxFloat32x4> r_rcas_input : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_RCAS_INPUT);
+Texture2D<FfxFloat32x4> r_rcas_input;
 
 FfxFloat32x4 LoadRCAS_Input(FfxInt32x2 iPxPos)
 {
@@ -491,7 +498,7 @@ FfxFloat32x3 SampleRCAS_Input(FfxFloat32x2 fUV)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_INTERNAL_UPSCALED)
-RWTexture2D<FfxFloat32x4> rw_internal_upscaled_color : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_INTERNAL_UPSCALED);
+RWTexture2D<FfxFloat32x4> rw_internal_upscaled_color;
 
 void StoreReprojectedHistory(FfxUInt32x2 iPxHistory, FfxFloat32x4 fHistory)
 {
@@ -505,7 +512,7 @@ void StoreInternalColorAndWeight(FfxUInt32x2 iPxPos, FfxFloat32x4 fColorAndWeigh
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_UPSCALED_OUTPUT)
-RWTexture2D<FfxFloat32x4> rw_upscaled_output : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_UPSCALED_OUTPUT);
+RWTexture2D<FfxFloat32x4> rw_upscaled_output;
 
 void StoreUpscaledOutput(FfxUInt32x2 iPxPos, FfxFloat32x3 fColor)
 {
@@ -514,7 +521,7 @@ void StoreUpscaledOutput(FfxUInt32x2 iPxPos, FfxFloat32x3 fColor)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_ACCUMULATION)
-Texture2D<FfxFloat32> r_accumulation : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_ACCUMULATION);
+Texture2D<FfxFloat32> r_accumulation;
 
 FfxFloat32 SampleAccumulation(FfxFloat32x2 fUV)
 {
@@ -523,7 +530,7 @@ FfxFloat32 SampleAccumulation(FfxFloat32x2 fUV)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_ACCUMULATION)
-RWTexture2D<FfxFloat32> rw_accumulation : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_ACCUMULATION);
+RWTexture2D<FfxFloat32> rw_accumulation;
 
 void StoreAccumulation(FfxUInt32x2 iPxPos, FfxFloat32 fAccumulation)
 {
@@ -532,21 +539,21 @@ void StoreAccumulation(FfxUInt32x2 iPxPos, FfxFloat32 fAccumulation)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_SHADING_CHANGE)
-Texture2D<FfxFloat32> r_shading_change : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_SHADING_CHANGE);
+Texture2D<FfxFloat32> r_shading_change;
 
 FfxFloat32 LoadShadingChange(FfxUInt32x2 iPxPos)
 {
-    return r_shading_change[iPxPos];
+    return r_shading_change[iPxPos] * fShadingChangeScale;
 }
 
 FfxFloat32 SampleShadingChange(FfxFloat32x2 fUV)
 {
-    return r_shading_change.SampleLevel(s_LinearClamp, fUV, 0);
+    return r_shading_change.SampleLevel(s_LinearClamp, fUV, 0) * fShadingChangeScale;
 }
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_SHADING_CHANGE)
-RWTexture2D<FfxFloat32> rw_shading_change : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_SHADING_CHANGE);
+RWTexture2D<FfxFloat32> rw_shading_change;
 
 void StoreShadingChange(FfxUInt32x2 iPxPos, FfxFloat32 fShadingChange)
 {
@@ -555,7 +562,7 @@ void StoreShadingChange(FfxUInt32x2 iPxPos, FfxFloat32 fShadingChange)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_FARTHEST_DEPTH)
-Texture2D<FfxFloat32> r_farthest_depth : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_FARTHEST_DEPTH);
+Texture2D<FfxFloat32> r_farthest_depth;
 
 FfxInt32x2 GetFarthestDepthResourceDimensions()
 {
@@ -578,7 +585,7 @@ FfxFloat32 SampleFarthestDepth(FfxFloat32x2 fUV)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_FARTHEST_DEPTH)
-RWTexture2D<FfxFloat32> rw_farthest_depth : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_FARTHEST_DEPTH);
+RWTexture2D<FfxFloat32> rw_farthest_depth;
 
 void StoreFarthestDepth(FfxUInt32x2 iPxPos, FfxFloat32 fDepth)
 {
@@ -587,7 +594,7 @@ void StoreFarthestDepth(FfxUInt32x2 iPxPos, FfxFloat32 fDepth)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_FARTHEST_DEPTH_MIP1)
-Texture2D<FfxFloat32> r_farthest_depth_mip1 : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_FARTHEST_DEPTH_MIP1);
+Texture2D<FfxFloat32> r_farthest_depth_mip1;
 
 FfxInt32x2 GetFarthestDepthMip1ResourceDimensions()
 {
@@ -610,7 +617,7 @@ FfxFloat32 SampleFarthestDepthMip1(FfxFloat32x2 fUV)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_FARTHEST_DEPTH_MIP1)
-RWTexture2D<FfxFloat32> rw_farthest_depth_mip1 : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_FARTHEST_DEPTH_MIP1);
+RWTexture2D<FfxFloat32> rw_farthest_depth_mip1;
 
 void StoreFarthestDepthMip1(FfxUInt32x2 iPxPos, FfxFloat32 fDepth)
 {
@@ -619,7 +626,7 @@ void StoreFarthestDepthMip1(FfxUInt32x2 iPxPos, FfxFloat32 fDepth)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_CURRENT_LUMA)
-Texture2D<FfxFloat32> r_current_luma : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_CURRENT_LUMA);
+Texture2D<FfxFloat32> r_current_luma;
 
 FfxFloat32 LoadCurrentLuma(FfxUInt32x2 iPxPos)
 {
@@ -633,7 +640,7 @@ FfxFloat32 SampleCurrentLuma(FfxFloat32x2 uv)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_CURRENT_LUMA)
-RWTexture2D<FfxFloat32> rw_current_luma : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_CURRENT_LUMA);
+RWTexture2D<FfxFloat32> rw_current_luma;
 
 void StoreCurrentLuma(FfxUInt32x2 iPxPos, FfxFloat32 fLuma)
 {
@@ -642,7 +649,7 @@ void StoreCurrentLuma(FfxUInt32x2 iPxPos, FfxFloat32 fLuma)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_LUMA_INSTABILITY)
-Texture2D<FfxFloat32> r_luma_instability : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_LUMA_INSTABILITY);
+Texture2D<FfxFloat32> r_luma_instability;
 
 FfxFloat32 SampleLumaInstability(FfxFloat32x2 uv)
 {
@@ -651,7 +658,7 @@ FfxFloat32 SampleLumaInstability(FfxFloat32x2 uv)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_LUMA_INSTABILITY)
-RWTexture2D<FfxFloat32> rw_luma_instability : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_LUMA_INSTABILITY);
+RWTexture2D<FfxFloat32> rw_luma_instability;
 
 void StoreLumaInstability(FfxUInt32x2 iPxPos, FfxFloat32 fLumaInstability)
 {
@@ -660,7 +667,7 @@ void StoreLumaInstability(FfxUInt32x2 iPxPos, FfxFloat32 fLumaInstability)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_PREVIOUS_LUMA)
-Texture2D<FfxFloat32> r_previous_luma : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_PREVIOUS_LUMA);
+Texture2D<FfxFloat32> r_previous_luma;
 
 FfxFloat32 LoadPreviousLuma(FfxUInt32x2 iPxPos)
 {
@@ -674,7 +681,7 @@ FfxFloat32 SamplePreviousLuma(FfxFloat32x2 uv)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_NEW_LOCKS)
-Texture2D<unorm FfxFloat32> r_new_locks : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_NEW_LOCKS);
+Texture2D<unorm FfxFloat32> r_new_locks;
 
 FfxFloat32 LoadNewLocks(FfxUInt32x2 iPxPos)
 {
@@ -683,7 +690,7 @@ FfxFloat32 LoadNewLocks(FfxUInt32x2 iPxPos)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_NEW_LOCKS)
-RWTexture2D<unorm FfxFloat32> rw_new_locks : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_NEW_LOCKS);
+RWTexture2D<unorm FfxFloat32> rw_new_locks;
 
 FfxFloat32 LoadRwNewLocks(FfxUInt32x2 iPxPos)
 {
@@ -697,7 +704,7 @@ void StoreNewLocks(FfxUInt32x2 iPxPos, FfxFloat32 newLock)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_RECONSTRUCTED_PREV_NEAREST_DEPTH)
-Texture2D<FfxUInt32> r_reconstructed_previous_nearest_depth : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_RECONSTRUCTED_PREV_NEAREST_DEPTH);
+Texture2D<FfxUInt32> r_reconstructed_previous_nearest_depth;
 
 FfxFloat32 LoadReconstructedPrevDepth(FfxUInt32x2 iPxPos)
 {
@@ -706,7 +713,7 @@ FfxFloat32 LoadReconstructedPrevDepth(FfxUInt32x2 iPxPos)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_RECONSTRUCTED_PREV_NEAREST_DEPTH)
-RWTexture2D<FfxUInt32> rw_reconstructed_previous_nearest_depth : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_RECONSTRUCTED_PREV_NEAREST_DEPTH);
+RWTexture2D<FfxUInt32> rw_reconstructed_previous_nearest_depth;
 
 void StoreReconstructedDepth(FfxUInt32x2 iPxSample, FfxFloat32 fDepth)
 {
@@ -726,7 +733,7 @@ void SetReconstructedDepth(FfxUInt32x2 iPxSample, const FfxUInt32 uValue)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_DILATED_DEPTH)
-RWTexture2D<FfxFloat32> rw_dilated_depth : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_DILATED_DEPTH);
+RWTexture2D<FfxFloat32> rw_dilated_depth;
 
 void StoreDilatedDepth(FFX_PARAMETER_IN FfxUInt32x2 iPxPos, FFX_PARAMETER_IN FfxFloat32 fDepth)
 {
@@ -735,7 +742,7 @@ void StoreDilatedDepth(FFX_PARAMETER_IN FfxUInt32x2 iPxPos, FFX_PARAMETER_IN Ffx
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_DILATED_MOTION_VECTORS)
-RWTexture2D<FfxFloat32x2> rw_dilated_motion_vectors : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_DILATED_MOTION_VECTORS);
+RWTexture2D<FfxFloat32x2> rw_dilated_motion_vectors;
 
 void StoreDilatedMotionVector(FFX_PARAMETER_IN FfxUInt32x2 iPxPos, FFX_PARAMETER_IN FfxFloat32x2 fMotionVector)
 {
@@ -744,7 +751,7 @@ void StoreDilatedMotionVector(FFX_PARAMETER_IN FfxUInt32x2 iPxPos, FFX_PARAMETER
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_DILATED_MOTION_VECTORS)
-Texture2D<FfxFloat32x2> r_dilated_motion_vectors : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_DILATED_MOTION_VECTORS);
+Texture2D<FfxFloat32x2> r_dilated_motion_vectors;
 
 FfxFloat32x2 LoadDilatedMotionVector(FfxUInt32x2 iPxInput)
 {
@@ -758,7 +765,7 @@ FfxFloat32x2 SampleDilatedMotionVector(FfxFloat32x2 fUV)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_DILATED_DEPTH)
-Texture2D<FfxFloat32> r_dilated_depth : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_DILATED_DEPTH);
+Texture2D<FfxFloat32> r_dilated_depth;
 
 FfxFloat32 LoadDilatedDepth(FfxUInt32x2 iPxInput)
 {
@@ -772,14 +779,14 @@ FfxFloat32 SampleDilatedDepth(FfxFloat32x2 fUV)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_INPUT_EXPOSURE)
-Texture2D<FfxFloat32x2> r_input_exposure : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_INPUT_EXPOSURE);
+Texture2D<FfxFloat32x2> r_input_exposure;
 
 FfxFloat32 Exposure()
 {
     FfxFloat32 exposure = r_input_exposure[FfxUInt32x2(0, 0)].x;
 
 #if defined(__XBOX_SCARLETT)
-    if (exposure < 0.000030517578/** 2^15 */) {
+    if (exposure < 0.000030517578/** 2^-15 */) {
         exposure = 1.0f;
     }
 #else
@@ -794,7 +801,7 @@ FfxFloat32 Exposure()
 
 // BEGIN: FSR3UPSCALER_BIND_SRV_LANCZOS_LUT
 #if defined(FSR3UPSCALER_BIND_SRV_LANCZOS_LUT)
-Texture2D<FfxFloat32> r_lanczos_lut : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_LANCZOS_LUT);
+Texture2D<FfxFloat32> r_lanczos_lut;
 #endif
 
 FfxFloat32 SampleLanczos2Weight(FfxFloat32 x)
@@ -808,7 +815,7 @@ FfxFloat32 SampleLanczos2Weight(FfxFloat32 x)
 // END: FSR3UPSCALER_BIND_SRV_LANCZOS_LUT
 
 #if defined(FSR3UPSCALER_BIND_SRV_DILATED_REACTIVE_MASKS)
-Texture2D<unorm FfxFloat32x4> r_dilated_reactive_masks : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_DILATED_REACTIVE_MASKS);
+Texture2D<unorm FfxFloat32x4> r_dilated_reactive_masks;
 
 FfxFloat32x4 SampleDilatedReactiveMasks(FfxFloat32x2 fUV)
 {
@@ -817,7 +824,7 @@ FfxFloat32x4 SampleDilatedReactiveMasks(FfxFloat32x2 fUV)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_DILATED_REACTIVE_MASKS)
-RWTexture2D<unorm FfxFloat32x4> rw_dilated_reactive_masks : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_DILATED_REACTIVE_MASKS);
+RWTexture2D<unorm FfxFloat32x4> rw_dilated_reactive_masks;
 
 void StoreDilatedReactiveMasks(FFX_PARAMETER_IN FfxUInt32x2 iPxPos, FFX_PARAMETER_IN FfxFloat32x4 fDilatedReactiveMasks)
 {
@@ -826,7 +833,7 @@ void StoreDilatedReactiveMasks(FFX_PARAMETER_IN FfxUInt32x2 iPxPos, FFX_PARAMETE
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_INPUT_OPAQUE_ONLY)
-Texture2D<FfxFloat32x4> r_input_opaque_only : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_INPUT_OPAQUE_ONLY);
+Texture2D<FfxFloat32x4> r_input_opaque_only;
 
 FfxFloat32x3 LoadOpaqueOnly(FFX_PARAMETER_IN FFX_MIN16_I2 iPxPos)
 {
@@ -835,7 +842,7 @@ FfxFloat32x3 LoadOpaqueOnly(FFX_PARAMETER_IN FFX_MIN16_I2 iPxPos)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_PREV_PRE_ALPHA_COLOR)
-Texture2D<float3> r_input_prev_color_pre_alpha : FFX_FSR3UPSCALER_DECLARE_SRV(FFX_FSR3UPSCALER_RESOURCE_IDENTIFIER_PREV_PRE_ALPHA_COLOR);
+Texture2D<float3> r_input_prev_color_pre_alpha;
 
 FfxFloat32x3 LoadPrevPreAlpha(FFX_PARAMETER_IN FFX_MIN16_I2 iPxPos)
 {
@@ -844,7 +851,7 @@ FfxFloat32x3 LoadPrevPreAlpha(FFX_PARAMETER_IN FFX_MIN16_I2 iPxPos)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_PREV_POST_ALPHA_COLOR)
-Texture2D<float3> r_input_prev_color_post_alpha : FFX_FSR3UPSCALER_DECLARE_SRV(FFX_FSR3UPSCALER_RESOURCE_IDENTIFIER_PREV_POST_ALPHA_COLOR);
+Texture2D<float3> r_input_prev_color_post_alpha;
 
 FfxFloat32x3 LoadPrevPostAlpha(FFX_PARAMETER_IN FFX_MIN16_I2 iPxPos)
 {
@@ -855,8 +862,8 @@ FfxFloat32x3 LoadPrevPostAlpha(FFX_PARAMETER_IN FFX_MIN16_I2 iPxPos)
 #if defined(FSR3UPSCALER_BIND_UAV_AUTOREACTIVE) && \
     defined(FSR3UPSCALER_BIND_UAV_AUTOCOMPOSITION)
 
-RWTexture2D<float> rw_output_autoreactive       : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_AUTOREACTIVE);
-RWTexture2D<float> rw_output_autocomposition    : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_AUTOCOMPOSITION);
+RWTexture2D<float> rw_output_autoreactive;
+RWTexture2D<float> rw_output_autocomposition;
 
 void StoreAutoReactive(FFX_PARAMETER_IN FFX_MIN16_I2 iPxPos, FFX_PARAMETER_IN FFX_MIN16_F2 fReactive)
 {
@@ -867,7 +874,7 @@ void StoreAutoReactive(FFX_PARAMETER_IN FFX_MIN16_I2 iPxPos, FFX_PARAMETER_IN FF
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_PREV_PRE_ALPHA_COLOR)
-RWTexture2D<float3> rw_output_prev_color_pre_alpha : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_PREV_PRE_ALPHA_COLOR);
+RWTexture2D<float3> rw_output_prev_color_pre_alpha;
 
 void StorePrevPreAlpha(FFX_PARAMETER_IN FFX_MIN16_I2 iPxPos, FFX_PARAMETER_IN FFX_MIN16_F3 color)
 {
@@ -876,7 +883,7 @@ void StorePrevPreAlpha(FFX_PARAMETER_IN FFX_MIN16_I2 iPxPos, FFX_PARAMETER_IN FF
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_PREV_POST_ALPHA_COLOR)
-RWTexture2D<float3> rw_output_prev_color_post_alpha : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_PREV_POST_ALPHA_COLOR);
+RWTexture2D<float3> rw_output_prev_color_post_alpha;
 
 void StorePrevPostAlpha(FFX_PARAMETER_IN FFX_MIN16_I2 iPxPos, FFX_PARAMETER_IN FFX_MIN16_F3 color)
 {
@@ -885,7 +892,7 @@ void StorePrevPostAlpha(FFX_PARAMETER_IN FFX_MIN16_I2 iPxPos, FFX_PARAMETER_IN F
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_FRAME_INFO)
-RWTexture2D<FfxFloat32x4> rw_frame_info : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_FRAME_INFO);
+RWTexture2D<FfxFloat32x4> rw_frame_info;
 
 FfxFloat32x4 LoadFrameInfo()
 {
@@ -899,7 +906,7 @@ void StoreFrameInfo(FfxFloat32x4 fInfo)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_SRV_FRAME_INFO)
-Texture2D<FfxFloat32x4> r_frame_info : FFX_FSR3UPSCALER_DECLARE_SRV(FSR3UPSCALER_BIND_SRV_FRAME_INFO);
+Texture2D<FfxFloat32x4> r_frame_info;
 
 FfxFloat32x4 FrameInfo()
 {
@@ -914,12 +921,12 @@ FfxFloat32x4 FrameInfo()
     defined(FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_4)    && \
     defined(FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_5)
 
-RWTexture2D<FfxFloat32x2>                   rw_spd_mip0   : FFX_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_0);
-RWTexture2D<FfxFloat32x2>                   rw_spd_mip1   : FFX_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_1);
-RWTexture2D<FfxFloat32x2>                   rw_spd_mip2   : FFX_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_2);
-RWTexture2D<FfxFloat32x2>                   rw_spd_mip3   : FFX_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_3);
-RWTexture2D<FfxFloat32x2>                   rw_spd_mip4   : FFX_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_4);
-globallycoherent RWTexture2D<FfxFloat32x2>  rw_spd_mip5   : FFX_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_5);
+RWTexture2D<FfxFloat32x2>                   rw_spd_mip0;
+RWTexture2D<FfxFloat32x2>                   rw_spd_mip1;
+RWTexture2D<FfxFloat32x2>                   rw_spd_mip2;
+RWTexture2D<FfxFloat32x2>                   rw_spd_mip3;
+RWTexture2D<FfxFloat32x2>                   rw_spd_mip4;
+globallycoherent RWTexture2D<FfxFloat32x2>  rw_spd_mip5;
 
 FfxFloat32x2 RWLoadPyramid(FFX_PARAMETER_IN FfxInt32x2 iPxPos, FFX_PARAMETER_IN FfxUInt32 index)
 {
@@ -960,7 +967,7 @@ void StorePyramid(FFX_PARAMETER_IN FfxInt32x2 iPxPos, FFX_PARAMETER_IN FfxFloat3
 #endif
 
 #if defined FSR3UPSCALER_BIND_UAV_SPD_GLOBAL_ATOMIC
-globallycoherent RWTexture2D<FfxUInt32>   rw_spd_global_atomic : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_SPD_GLOBAL_ATOMIC);
+globallycoherent RWTexture2D<FfxUInt32>   rw_spd_global_atomic;
 
 void SPD_IncreaseAtomicCounter(inout FfxUInt32 spdCounter)
 {

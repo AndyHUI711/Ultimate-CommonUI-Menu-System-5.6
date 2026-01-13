@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 - 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+* Copyright (c) 2022 - 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
 * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
 * property and proprietary rights in and to this material, related
@@ -29,11 +29,7 @@ public:
 	virtual void SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView) override;
 	virtual void SetupViewPoint(APlayerController* Player, FMinimalViewInfo& InViewInfo) override;
 	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) override;
-
-	virtual void PreRenderView_RenderThread(FRHICommandListImmediate& RHICmdList, FSceneView& InView) final override {}
-	virtual void PreRenderViewFamily_RenderThread(FRHICommandListImmediate& RHICmdList, FSceneViewFamily& InViewFamily) final override {}
 };
-
 
 
 class NISCORE_API FNVImageUpscaler final : public ISpatialUpscaler
